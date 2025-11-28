@@ -8,7 +8,7 @@ import asyncio
 from typing import Dict, List, Optional
 from celery import Task
 from celery.result import AsyncResult
-from app import celery_app
+from celery_app import celery_app
 import redis
 
 # Import the deep search generator
