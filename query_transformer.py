@@ -12,7 +12,7 @@ import json
 import re
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict
-from openai import AsyncOpenAI
+# from openai import AsyncOpenAI
 
 import os
 from anthropic import AsyncAnthropic
