@@ -796,7 +796,7 @@ class EnhancedHTMLAppGenerator:
             self._log("STAGE", "No research needed, generating directly")
             yield {"type": "reasoning","content":"Developing report..."}
         
-            markdown = await self._generate_markdown(user_prompt, {}, [], {})
+            markdown = await self._generate_html(user_prompt, {}, [], {})
             yield {"type":"markdown","content":markdown}
             return
         
@@ -2044,7 +2044,7 @@ Your job is to use 100% of it to create an exhaustive, beautiful application."""
         if self.verbose:
             self._log("REPORT", "Generating markdown report...")
         
-        markdown_content = await self._generate_markdown(
+        markdown_content = await self._generate_html(
             user_query=user_query,
             search_results=search_results,
             scraped_results=scraped_results,
