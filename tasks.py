@@ -14,14 +14,25 @@ import redis
 # Import the deep search generator
 from deep_search import EnhancedMarkdownReportGenerator
 
-# Redis client for pub/sub progress updates
-redis_client = redis.Redis(
-    host='localhost',  # Update with your Redis host
-    port=6379,
-    db=0,
-    decode_responses=True
-)
+# # Redis client for pub/sub progress updates
+# redis_client = redis.Redis(
+#     host='localhost',  # Update with your Redis host
+#     port=6379,
+#     db=0,
+#     decode_responses=True
+# )
 
+import os
+
+redis_client = redis.Redis(
+    host=os.getenv('REDIS_HOST', 'localhost'),  # ✅ Use environment variable
+    port=int(os.getenv('REDIS_PORT', 6379)),
+    db=0,
+    decode_responses=True,
+    socket_connect_timeout=5,
+    socket_timeout=5,
+    retry_on_timeout=True
+)
 # Import scraper task signature for type hints
 # from tasks import scrape_content_task  # This will be in scraper worker
 
@@ -31,17 +42,16 @@ redis_client = redis.Redis(
 # ============================================================================
 
 def publish_progress(job_id: str, update: Dict):
-    """
-    Publish progress update to Redis pub/sub channel
-    Frontend/API subscribes to: job:{job_id}:progress
-    """
+    """Publish progress update to Redis pub/sub channel"""
     channel = f"job:{job_id}:progress"
     try:
         redis_client.publish(channel, json.dumps(update))
         print(f"[PROGRESS] Published to {channel}: {update.get('type')}")
+    except redis.ConnectionError as e:
+        # Don't crash if Redis pub/sub fails - just log it
+        print(f"[PROGRESS] Failed to publish (non-fatal): {e}")
     except Exception as e:
         print(f"[PROGRESS] Failed to publish: {e}")
-
 
 # ============================================================================
 # HELPER: Call Scraper Worker and Wait for Results

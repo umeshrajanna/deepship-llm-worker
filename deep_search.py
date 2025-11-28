@@ -1025,7 +1025,16 @@ Output ONLY the HTML (no explanations, no markdown code blocks)."""
             
             if result.get("type") == "transformer_output":
                 transform_result = result.get("content")
-        
+
+            if not transform_result:
+                print("[ERROR] Transformer returned None, using defaults")
+                transform_result = {
+                    "web_search_needed": True,
+                    "search_queries": [user_prompt],
+                    "data_extraction_needed": False,
+                    "data_types": []
+                }
+                
         web_search_needed = transform_result['web_search_needed']
         search_queries = transform_result['search_queries'][:self.max_search_queries]
         data_types = transform_result.get('data_types', [])
