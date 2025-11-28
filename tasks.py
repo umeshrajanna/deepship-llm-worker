@@ -64,7 +64,7 @@ def publish_progress(job_id: str, update: Dict):
 # Import Deep Search Generator
 # ============================================================================
 
-from deep_search import EnhancedMarkdownReportGenerator
+from deep_search import EnhancedHTMLAppGenerator
 
 # ============================================================================
 # Helper: Call Scraper and Wait
@@ -169,7 +169,7 @@ def deep_search_task(self, job_id: str, query: str, conversation_history: list =
         # ====================================================================
         # Initialize Generator
         # ====================================================================
-        generator = EnhancedMarkdownReportGenerator(
+        generator = EnhancedHTMLAppGenerator(
             enable_reasoning_capture=True,
             verbose=True,
             max_search_queries=5,
