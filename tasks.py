@@ -101,6 +101,19 @@ def format_answer_with_llm(query: str, synthesis: Dict) -> str:
     return answer
 
 # ============================================================================
+# Scraper Task Stub (for dispatching only)
+# ============================================================================
+
+@celery_app.task(bind=True, name='tasks.scrape_content_task')
+def scrape_content_task(self, job_id: str, search_query: str, original_query: str):
+    """
+    Stub for dispatching scraper tasks to scraper_queue.
+    This is never executed by LLM worker - only used for dispatching.
+    Actual implementation is in scraper worker's tasks.py
+    """
+    raise NotImplementedError("This task should only be dispatched, not executed by LLM worker")
+
+# ============================================================================
 # Main Task: Deep Search (LLM Worker)
 # ============================================================================
 
@@ -138,9 +151,7 @@ def deep_search_task(self, job_id: str, query: str):
         
         scraper_tasks = []
         for angle in query_analysis['search_angles']:
-            # Import scrape task signature (just for dispatching)
-            from tasks_api import scrape_content_task
-            
+            # Use local stub to dispatch (no import needed!)
             task = scrape_content_task.apply_async(
                 args=[job_id, angle['search_query'], query],
                 queue='scraper_queue',  # Send to scraper worker!
