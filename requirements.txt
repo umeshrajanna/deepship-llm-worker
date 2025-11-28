@@ -1,0 +1,21 @@
+# requirements-worker-llm.txt - Dependencies for LLM worker
+# No Playwright, no sentence-transformers (scraper worker handles that)
+
+# Database
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+
+# Redis and Celery
+redis==5.2.1
+celery==5.4.0
+
+# Pydantic for data validation
+pydantic==2.10.6
+
+# HTTP client (for LLM API calls)
+requests==2.32.3
+
+# Optional: Add anthropic SDK when you integrate Claude API
+# anthropic==0.25.0
+
+# That's it! ~200MB total

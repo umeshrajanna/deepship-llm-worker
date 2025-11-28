@@ -23,7 +23,7 @@ ENV PYTHONPATH=/app
 
 # Health check - verify worker is running
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD celery -A workers.celery_app inspect ping -d llm@$HOSTNAME || exit 1
+    CMD celery -A celery_app inspect ping -d llm@$HOSTNAME || exit 1
 
 # Start LLM worker (listens to 'celery' queue only)
 CMD ["celery", "-A", "celery_app", "worker", \
