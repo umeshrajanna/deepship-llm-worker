@@ -442,8 +442,8 @@ Your extracted JSON:"""
             timeout=90.0
         )
             
-            extracted_text = response.choices[0].message.content.strip()
-            
+            # extracted_text = response.choices[0].message.content.strip()
+            extracted_text = response.content[0].text.strip()
             # Clean JSON
             if extracted_text.startswith("```json"):
                 extracted_text = extracted_text[7:]
@@ -997,8 +997,8 @@ Output ONLY the HTML (no explanations, no markdown code blocks)."""
                 messages=[{"role": "user", "content": prompt}]
             )
             
-            summary = response.choices[0].message.content.strip()
-            
+            # summary = response.choices[0].message.content.strip()
+            summary = response.content[0].text.strip()            
             return summary
             
         except Exception as e:

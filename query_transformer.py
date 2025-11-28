@@ -22,6 +22,7 @@ client = AsyncAnthropic(api_key=key)
 class EnhancedQueryTransformer:
     """Advanced query transformation with multi-search support"""
     
+        
     @staticmethod
     async def get_transformed_query(
         self,
@@ -104,7 +105,7 @@ Now analyze the user's query and return ONLY the JSON:"""
 
         try:
             # Call Claude API
-            response = await self.client.messages.create(
+            response = await client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=1000,
                 temperature=0.3,
