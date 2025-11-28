@@ -13,7 +13,7 @@ import re
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict
 # from openai import AsyncOpenAI
-
+from typing import Optional
 import os
 from anthropic import AsyncAnthropic
 key = os.getenv("LLM_API_KEY")
