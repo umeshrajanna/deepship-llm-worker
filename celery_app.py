@@ -6,7 +6,7 @@ celery_app = Celery(
     "deep_search_worker",
     broker=config.CELERY_BROKER_URL,
     backend=config.CELERY_RESULT_BACKEND,
-    include=["workers.tasks"]
+    include=["tasks"]
 )
 
 # Configure Celery
@@ -26,5 +26,5 @@ celery_app.conf.update(
 
 # Task routes (optional - for dedicated queues)
 celery_app.conf.task_routes = {
-    "workers.tasks.deep_search_task": {"queue": "celery"},
+    "tasks.deep_search_task": {"queue": "celery"},
 }
