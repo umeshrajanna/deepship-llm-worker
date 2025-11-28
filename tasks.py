@@ -1,4 +1,4 @@
-# tasks.py - LLM Worker (Updated for deep_search.py with callbacks)
+# tasks.py - LLM Worker for EnhancedHTMLAppGenerator
 
 from celery import Celery
 import os
@@ -28,10 +28,7 @@ celery_app.conf.update(
     result_expires=3600,
 )
 
-# ============================================================================
-# Redis Client for Progress Updates
-# ============================================================================
-
+# Redis client for progress updates
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 try:
@@ -42,28 +39,23 @@ try:
         retry_on_timeout=True
     )
     redis_client.ping()
-    print(f"[REDIS] ✅ Connected to {redis_url}")
+    print(f"[REDIS] ✅ Connected")
 except Exception as e:
-    print(f"[REDIS] ⚠️ Connection failed: {e}")
+    print(f"[REDIS] ⚠️ Failed: {e}")
     redis_client = None
 
 def publish_progress(job_id: str, update: Dict):
     """Publish progress update to Redis pub/sub channel"""
     if not redis_client:
-        print(f"[PROGRESS] Skipped (Redis unavailable): {update.get('type')}")
         return
     
     try:
         channel = f"job:{job_id}:progress"
         redis_client.publish(channel, json.dumps(update))
-        print(f"[PROGRESS] Published: {update.get('type')}")
     except Exception as e:
-        print(f"[PROGRESS] Failed (non-fatal): {e}")
+        print(f"[PROGRESS] Failed: {e}")
 
-# ============================================================================
-# Import Deep Search Generator
-# ============================================================================
-
+# ✅ Import YOUR class (EnhancedHTMLAppGenerator)
 from deep_search import EnhancedHTMLAppGenerator
 
 # ============================================================================
@@ -77,37 +69,23 @@ async def call_scraper_and_wait(
     original_query: str,
     timeout: int = 600
 ):
-    """
-    Send URLs to scraper worker and wait for results
+    """Send URLs to scraper worker and wait for results"""
     
-    This function:
-    1. Dispatches task to scraper_queue
-    2. Waits for scraper to complete
-    3. Parses and returns scraped results
-    """
+    print(f"[SCRAPER_CALLBACK] Dispatching scraper for {len(urls)} URLs")
     
-    print(f"✅ [SCRAPER_CALLBACK] Dispatching scraper task for {len(urls)} URLs")
-    
-    # Dispatch to scraper queue
     scrape_task = celery_app.send_task(
         'tasks.scrape_content_task',
         args=[job_id, urls, search_query, original_query],
         queue='scraper_queue'
     )
     
-    print(f"✅ [SCRAPER_CALLBACK] Task ID: {scrape_task.id}")
+    print(f"[SCRAPER_CALLBACK] Task ID: {scrape_task.id}")
     
-    # Wait for results
     try:
         result = scrape_task.get(timeout=timeout)
-        print(f"✅ [SCRAPER_CALLBACK] Received result: {type(result)}")
+        print(f"[SCRAPER_CALLBACK] Received: {type(result)}")
         
-        # Parse scraper's return format
-        # Scraper might return:
-        # - {"data": {"results": [...]}}
-        # - {"results": [...]}
-        # - [...]
-        
+        # Parse scraper return format
         if isinstance(result, dict) and 'data' in result:
             scraped_data = result['data'].get('results', [])
         elif isinstance(result, dict) and 'results' in result:
@@ -115,60 +93,45 @@ async def call_scraper_and_wait(
         elif isinstance(result, list):
             scraped_data = result
         else:
-            print(f"⚠️ [SCRAPER_CALLBACK] Unexpected format: {type(result)}")
             scraped_data = []
         
-        print(f"✅ [SCRAPER_CALLBACK] Returning {len(scraped_data)} results")
+        print(f"[SCRAPER_CALLBACK] Returning {len(scraped_data)} results")
         return scraped_data
         
     except Exception as e:
-        print(f"❌ [SCRAPER_CALLBACK] Error: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"[SCRAPER_CALLBACK] Error: {e}")
         return []
 
 # ============================================================================
-# Main Task: Deep Search
+# Main Task: Deep Search (HTML App Generation)
 # ============================================================================
 
 @celery_app.task(
     bind=True,
     max_retries=1,
-    soft_time_limit=900,  # 15 minutes
-    time_limit=960,       # 16 minutes
+    soft_time_limit=900,
+    time_limit=960,
     name='tasks.deep_search_task'
 )
 def deep_search_task(self, job_id: str, query: str, conversation_history: list = None):
     """
-    Main orchestration task for deep search with markdown generation
-    
-    Args:
-        job_id: Unique job identifier
-        query: User's search query
-        conversation_history: Previous conversation context (optional)
-    
-    Returns:
-        Dict with markdown, analysis_summary, and conversation_history
+    Main task for HTML app generation with research pipeline
     """
     
     print("=" * 80)
-    print("🚀 Starting deep_search_task")
+    print("🚀 Starting deep_search_task (HTML App Generation)")
     print("=" * 80)
     print(f"Job ID: {job_id}")
     print(f"Query: {query}")
-    print(f"Has conversation history: {conversation_history is not None}")
     print("=" * 80)
     
     try:
-        # Publish initial progress
         publish_progress(job_id, {
             "type": "reasoning",
-            "content": "Initializing deep search..."
+            "content": "Initializing HTML app generation..."
         })
         
-        # ====================================================================
-        # Initialize Generator
-        # ====================================================================
+        # ✅ Initialize YOUR generator
         generator = EnhancedHTMLAppGenerator(
             enable_reasoning_capture=True,
             verbose=True,
@@ -177,52 +140,38 @@ def deep_search_task(self, job_id: str, query: str, conversation_history: list =
             scrape_timeout=600
         )
         
-        # ====================================================================
-        # ✅ INJECT SCRAPER CALLBACK
-        # ====================================================================
-        # This callback will be called by deep_search.py when it needs to scrape URLs
+        # ✅ INJECT CALLBACKS
         generator.scraper_callback = lambda urls, sq, oq: asyncio.run(
             call_scraper_and_wait(job_id, urls, sq, oq)
         )
-        
-        # ====================================================================
-        # ✅ INJECT PROGRESS CALLBACK
-        # ====================================================================
-        # This callback will be called for progress updates
         generator.progress_callback = lambda update: publish_progress(job_id, update)
         
         print("✅ Generator initialized with callbacks")
-        print(f"   - Scraper callback: {generator.scraper_callback is not None}")
-        print(f"   - Progress callback: {generator.progress_callback is not None}")
         
-        # ====================================================================
-        # Run the Full Pipeline
-        # ====================================================================
-        print("🚀 Starting develop_report...")
-        
-        final_markdown = None
+        # ✅ Run pipeline (using develop_app, NOT develop_report)
+        final_html = None  # ✅ Changed from final_markdown
         analysis_summary = None
         
         async def run_pipeline():
-            nonlocal final_markdown, analysis_summary
+            nonlocal final_html, analysis_summary
             
-            async for result in generator.develop_report(
+            # ✅ Call develop_app (NOT develop_report)
+            async for result in generator.develop_app(
                 user_prompt=query,
                 conversation_history=conversation_history,
                 use_multi_stage=True,
                 enable_scraping=True,
                 return_conversation=True
             ):
-                # Forward progress updates to Redis
                 result_type = result.get("type")
                 
                 if result_type in ["reasoning", "sources"]:
                     publish_progress(job_id, result)
-                    print(f"[PROGRESS] {result_type}: {str(result.get('content'))[:100]}")
                 
-                elif result_type == "markdown":
-                    final_markdown = result.get("content")
-                    print(f"✅ Markdown generated: {len(final_markdown)} characters")
+                # ✅ Check for "html" not "markdown"
+                elif result_type == "html":
+                    final_html = result.get("content")
+                    print(f"✅ HTML generated: {len(final_html)} characters")
                 
                 elif result_type == "analysis_summary":
                     analysis_summary = result.get("content")
@@ -231,22 +180,19 @@ def deep_search_task(self, job_id: str, query: str, conversation_history: list =
                 elif result_type == "done":
                     print(f"✅ Development complete")
         
-        # Execute the async pipeline
         asyncio.run(run_pipeline())
         
-        if not final_markdown:
-            raise Exception("No markdown generated")
+        # ✅ Check for HTML not markdown
+        if not final_html:
+            raise Exception("No HTML generated")
         
-        print("✅ Markdown generated successfully")
-        print("✅ Analysis summary generated" if analysis_summary else "⚠️ No analysis summary")
+        print("✅ HTML generated successfully")
         
-        # ====================================================================
-        # Prepare Result
-        # ====================================================================
+        # ✅ Return HTML not markdown
         result_data = {
             "job_id": job_id,
             "status": "completed",
-            "markdown": final_markdown,
+            "html": final_html,  # ✅ Changed from "markdown"
             "analysis_summary": analysis_summary or "Analysis not available",
             "conversation_history": generator.get_conversation_history()
         }
@@ -255,14 +201,13 @@ def deep_search_task(self, job_id: str, query: str, conversation_history: list =
         print("✅ DEEP SEARCH TASK COMPLETED")
         print("=" * 80)
         print(f"Job ID: {job_id}")
-        print(f"Markdown length: {len(final_markdown)}")
+        print(f"HTML length: {len(final_html)}")  # ✅ Changed from "Markdown length"
         print(f"Analysis summary: {'Yes' if analysis_summary else 'No'}")
         print("=" * 80)
         
-        # Publish completion
         publish_progress(job_id, {
             "type": "complete",
-            "content": final_markdown
+            "content": final_html  # ✅ Changed from final_markdown
         })
         
         # Update database if available
@@ -277,9 +222,8 @@ def deep_search_task(self, job_id: str, query: str, conversation_history: list =
                 job.result = json.dumps(result_data)
                 db.commit()
             db.close()
-            print("✅ Database updated")
         except Exception as e:
-            print(f"⚠️ Failed to update database: {e}")
+            print(f"⚠️ Database update failed: {e}")
         
         return result_data
         
@@ -294,23 +238,16 @@ def deep_search_task(self, job_id: str, query: str, conversation_history: list =
         import traceback
         traceback.print_exc()
         
-        # Publish error
         publish_progress(job_id, {
             "type": "error",
-            "content": f"Search failed: {str(e)}"
+            "content": f"Error: {str(e)}"
         })
         
-        # Retry if possible
         if self.request.retries < self.max_retries:
-            retry_delay = 10
-            print(f"⏳ Retrying... (attempt {self.request.retries + 1}/{self.max_retries})")
-            publish_progress(job_id, {
-                "type": "reasoning",
-                "content": f"Retrying in {retry_delay}s..."
-            })
-            raise self.retry(exc=e, countdown=retry_delay)
+            print(f"⏳ Retrying...")
+            raise self.retry(exc=e, countdown=10)
         
-        # Max retries reached - update database
+        # Update database on failure
         try:
             from database import SessionLocal
             from models import SearchJob, JobStatus
@@ -327,15 +264,10 @@ def deep_search_task(self, job_id: str, query: str, conversation_history: list =
         
         raise
 
-# ============================================================================
-# Health Check
-# ============================================================================
-
 @celery_app.task(name='tasks.health_check')
 def health_check():
-    """Simple health check task"""
+    """Health check task"""
     return {
         "status": "healthy",
-        "worker": "llm_worker",
-        "has_deep_search": True
+        "worker": "llm_worker_html"
     }
