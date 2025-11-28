@@ -1,20 +1,46 @@
 # requirements-worker-llm.txt - Dependencies for LLM worker
-# No Playwright, no sentence-transformers (scraper worker handles that)
+# For deep_search.py and tasks.py
+# Python 3.9+
 
+# ============================================================================
+# Core LLM API (FIXED VERSIONS FOR COMPATIBILITY)
+# ============================================================================
+anthropic==0.34.2              # Claude API (compatible version without proxies issue)
+httpx==0.27.0                  # HTTP client (compatible with anthropic)
+
+# Alternative fix: Use latest anthropic with pinned httpx
+# anthropic==0.39.0
+# httpx<0.28.0
+
+# ============================================================================
+# HTTP Client (for web requests and API calls)
+# ============================================================================
+aiohttp==3.10.11               # Async HTTP (used in deep_search.py)
+requests==2.32.3               # Sync HTTP (backup/fallback)
+
+# ============================================================================
 # Database
-sqlalchemy==2.0.36
-psycopg2-binary==2.9.10
+# ============================================================================
+sqlalchemy==2.0.36             # Database ORM
+psycopg2-binary==2.9.10        # PostgreSQL adapter
 
-# Redis and Celery
-redis==5.2.1
-celery==5.4.0
+# ============================================================================
+# Redis and Celery (Task Queue)
+# ============================================================================
+redis==5.2.1                   # Redis client
+celery==5.4.0                  # Distributed task queue
 
-# Pydantic for data validation
-pydantic==2.10.6
+# ============================================================================
+# Data Validation
+# ============================================================================
+pydantic==2.10.6               # Data validation and settings
 
-# HTTP client (for LLM API calls)
-requests==2.32.3
-aiohttp==3.10.11   
+# ============================================================================
+# Utilities
+# ============================================================================
+python-dotenv==1.0.1           # Environment variables (for os.getenv)
 
-anthropic==0.39.0              # Claude API
-python-dotenv==1.0.1           # Environment variables
+# ============================================================================
+# Note: NO Playwright, NO sentence-transformers
+# Those are only needed in scraper worker
+# ============================================================================
