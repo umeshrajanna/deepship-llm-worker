@@ -1,5 +1,5 @@
 from celery import Celery
-from shared.config import config
+from config import config
 
 # Create Celery app
 celery_app = Celery(

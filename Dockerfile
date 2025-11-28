@@ -1,21 +1,33 @@
-# Dockerfile.scraper - Scraper Worker
-# Uses base image with all dependencies pre-installed
+# Dockerfile.worker-llm - LLM Worker (Lightweight)
+# No Playwright - just Python packages
 
-FROM umeshrajanna/deepship-scraper-base:latest
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install only essential system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
-# Expose no ports (worker doesn't need HTTP)
+# Set environment
+ENV PYTHONPATH=/app
 
-# Health check - verify worker can connect to Celery
+# Health check - verify worker is running
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD celery -A workers.celery_app inspect ping -d scraper@$HOSTNAME || exit 1
+    CMD celery -A workers.celery_app inspect ping -d llm@$HOSTNAME || exit 1
 
-# Start scraper worker
-# Listens only to 'scraper_queue'
-CMD ["celery", "-A", "workers.celery_app", "worker", \
+# Start LLM worker (listens to 'celery' queue only)
+CMD ["celery", "-A", "celery_app", "worker", \
      "--loglevel=info", \
-     "--concurrency=2", \
-     "-n", "scraper@%h", \
-     "-Q", "scraper_queue"]
+     "--concurrency=10", \
+     "-n", "llm@%h", \
+     "-Q", "celery"]

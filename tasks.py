@@ -1,36 +1,130 @@
-from workers.celery_app import celery_app
-from shared.redis_client import publish_progress
-from shared.database import SessionLocal
-from shared.config import config
-from api.models import SearchJob, JobStatus
+# tasks.py - LLM Worker (No Scraper Dependencies)
+# Handles query analysis and synthesis, dispatches to scraper worker
+
+from celery import Celery
+from celery.result import AsyncResult
+import os
 import time
 import json
-from datetime import datetime
 from typing import List, Dict, Any
-import asyncio
 
-# Import scraper functions
-from workers.scraper_core import scrape_and_extract
+# Celery app configuration
+celery_app = Celery(
+    'deepship',
+    broker=os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379'),
+    backend=os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379')
+)
 
+celery_app.conf.update(
+    task_serializer='json',
+    accept_content=['json'],
+    result_serializer='json',
+    timezone='UTC',
+    enable_utc=True,
+    task_routes={
+        'tasks.deep_search_task': {'queue': 'celery'},
+        'tasks.scrape_content_task': {'queue': 'scraper_queue'},
+    },
+    task_track_started=True,
+    result_expires=3600,
+)
 
-@celery_app.task(bind=True, max_retries=config.TASK_MAX_RETRIES)
+# Import database and Redis utilities (lightweight)
+try:
+    from database import SessionLocal
+    from models import SearchJob, JobStatus
+    from redis_client import publish_progress
+except ImportError:
+    # Fallback if using flat structure
+    pass
+
+# ============================================================================
+# Mock LLM Functions (Replace with Claude API)
+# ============================================================================
+
+def analyze_query_with_llm(query: str) -> Dict:
+    """
+    Mock: Analyze query and generate search angles
+    TODO: Replace with actual Claude API call
+    """
+    print(f"🤖 [MOCK] Analyzing query: {query}")
+    time.sleep(2)  # Simulate API call
+    
+    return {
+        "search_angles": [
+            {"angle": "recent developments", "search_query": f"{query} recent news 2024"},
+            {"angle": "expert analysis", "search_query": f"{query} expert analysis"},
+            {"angle": "statistical data", "search_query": f"{query} statistics data"},
+        ]
+    }
+
+def synthesize_with_llm(query: str, scraped_content: List[Dict]) -> Dict:
+    """
+    Mock: Synthesize information from scraped content
+    TODO: Replace with actual Claude API call
+    """
+    print(f"🤖 [MOCK] Synthesizing information for: {query}")
+    time.sleep(2)  # Simulate API call
+    
+    total_sources = sum(
+        len(item.get('data', {}).get('results', [])) 
+        for item in scraped_content if item
+    )
+    
+    return {
+        "key_findings": [
+            "Finding 1 based on multiple sources",
+            "Finding 2 with supporting evidence",
+            "Finding 3 from expert analysis"
+        ],
+        "source_count": total_sources,
+        "confidence": "high"
+    }
+
+def format_answer_with_llm(query: str, synthesis: Dict) -> str:
+    """
+    Mock: Format final answer
+    TODO: Replace with actual Claude API call
+    """
+    print(f"🤖 [MOCK] Formatting answer for: {query}")
+    time.sleep(1)  # Simulate API call
+    
+    findings = synthesis.get('key_findings', [])
+    source_count = synthesis.get('source_count', 0)
+    
+    answer = f"# Answer to: {query}\n\n"
+    answer += f"Based on {source_count} sources:\n\n"
+    
+    for i, finding in enumerate(findings, 1):
+        answer += f"{i}. {finding}\n"
+    
+    return answer
+
+# ============================================================================
+# Main Task: Deep Search (LLM Worker)
+# ============================================================================
+
+@celery_app.task(bind=True, max_retries=3, name='tasks.deep_search_task')
 def deep_search_task(self, job_id: str, query: str):
     """
-    Main deep search task - orchestrates LLM and scraping
-    Uses async scraping tasks via queue
+    Main orchestration task - runs on LLM worker
+    
+    1. Analyzes query with LLM
+    2. Dispatches scraper tasks to scraper_queue
+    3. Waits for scraping results
+    4. Synthesizes findings with LLM
+    5. Formats final answer
+    
+    NO SCRAPER IMPORTS - delegates scraping to scraper worker!
     """
-    db = SessionLocal()
+    print(f"🚀 Starting deep_search_task for job {job_id}: {query}")
     
     try:
         # Update job status
-        job = db.query(SearchJob).filter(SearchJob.id == job_id).first()
-        if job:
-            job.status = JobStatus.PROCESSING
-            job.celery_task_id = self.request.id
-            db.commit()
+        publish_progress(job_id, "reasoning", "Analyzing your query with AI...")
         
         # Step 1: Analyze query with LLM
-        publish_progress(job_id, "reasoning", "Analyzing your search query...")
+        print(f"📊 Step 1: Analyzing query...")
         query_analysis = analyze_query_with_llm(query)
         
         publish_progress(
@@ -39,201 +133,145 @@ def deep_search_task(self, job_id: str, query: str):
             f"Identified {len(query_analysis['search_angles'])} search angles"
         )
         
-        # Step 2: Dispatch scraper tasks to queue
-        publish_progress(
-            job_id,
-            "reasoning",
-            f"Dispatching {len(query_analysis['search_angles'])} scraping tasks..."
-        )
+        # Step 2: Dispatch scraper tasks to scraper_queue
+        print(f"🔍 Step 2: Dispatching {len(query_analysis['search_angles'])} scraper tasks...")
         
         scraper_tasks = []
-        for i, angle in enumerate(query_analysis['search_angles'], 1):
+        for angle in query_analysis['search_angles']:
+            # Import scrape task signature (just for dispatching)
+            from tasks_api import scrape_content_task
+            
             task = scrape_content_task.apply_async(
-                args=[job_id, angle, i, len(query_analysis['search_angles']), query],
-                queue='scraper_queue'
+                args=[job_id, angle['search_query'], query],
+                queue='scraper_queue',  # Send to scraper worker!
+                routing_key='scraper_queue'
             )
             scraper_tasks.append(task)
+            print(f"   📤 Dispatched scraper task: {task.id} for '{angle['angle']}'")
         
-        # Wait for scraper tasks
-        publish_progress(job_id, "reasoning", "Waiting for scraping to complete...")
+        publish_progress(
+            job_id,
+            "content",
+            f"Searching {len(scraper_tasks)} sources..."
+        )
         
+        # Step 3: Wait for scraper results (with timeout)
+        print(f"⏳ Step 3: Waiting for scraper results...")
         all_scraped_content = []
+        
         for i, task_result in enumerate(scraper_tasks, 1):
             try:
-                result = task_result.get(timeout=120)  # 2 min per scrape
-                if result:
-                    all_scraped_content.append(result)
-                    publish_progress(
-                        job_id,
-                        "content",
-                        f"✓ Completed {i}/{len(scraper_tasks)} scraping tasks"
-                    )
+                # Wait for this scraper task to complete
+                result = task_result.get(timeout=120)  # 2 min timeout per task
+                all_scraped_content.append(result)
+                
+                publish_progress(
+                    job_id,
+                    "content",
+                    f"Gathered information from source {i}/{len(scraper_tasks)}"
+                )
+                print(f"   ✅ Received result from scraper task {i}/{len(scraper_tasks)}")
+                
             except Exception as e:
-                publish_progress(job_id, "error", f"Scraping task {i} failed: {str(e)}")
+                print(f"   ⚠️ Scraper task {i} failed: {e}")
+                publish_progress(
+                    job_id,
+                    "reasoning",
+                    f"One source unavailable, continuing with others..."
+                )
                 continue
         
         if not all_scraped_content:
-            raise Exception("No content could be scraped")
+            raise Exception("No content could be scraped from any source")
         
-        # Step 3: Synthesize with LLM
-        publish_progress(job_id, "reasoning", "Synthesizing information...")
+        # Step 4: Synthesize findings with LLM
+        print(f"🧠 Step 4: Synthesizing information...")
+        publish_progress(job_id, "reasoning", "Synthesizing information from all sources...")
+        
         synthesis = synthesize_with_llm(query, all_scraped_content)
         
         publish_progress(
             job_id,
             "content",
-            f"Generated answer with {synthesis.get('source_count', 0)} sources"
+            f"Generated comprehensive answer with {synthesis.get('source_count', 0)} sources"
         )
         
-        # Step 4: Format answer
-        publish_progress(job_id, "reasoning", "Formatting final answer...")
+        # Step 5: Format final answer with LLM
+        print(f"✍️ Step 5: Formatting final answer...")
+        publish_progress(job_id, "reasoning", "Formatting your answer...")
+        
         final_answer = format_answer_with_llm(query, synthesis)
         
-        # Step 5: Save and complete
-        job = db.query(SearchJob).filter(SearchJob.id == job_id).first()
-        if job:
-            job.status = JobStatus.COMPLETED
-            job.result = json.dumps(final_answer)
-            job.completed_at = datetime.utcnow()
-            db.commit()
+        # Step 6: Complete!
+        print(f"✅ Deep search complete for job {job_id}")
+        
+        result_data = {
+            "query": query,
+            "answer": final_answer,
+            "sources": all_scraped_content,
+            "synthesis": synthesis,
+            "status": "complete"
+        }
         
         publish_progress(
             job_id,
             "complete",
-            final_answer.get('answer', ''),
-            full_result=final_answer
+            final_answer,
+            full_result=result_data
         )
         
-        return final_answer
+        # Update database
+        try:
+            db = SessionLocal()
+            job = db.query(SearchJob).filter(SearchJob.id == job_id).first()
+            if job:
+                job.status = JobStatus.COMPLETED
+                job.result = json.dumps(result_data)
+                db.commit()
+            db.close()
+        except Exception as e:
+            print(f"⚠️ Failed to update database: {e}")
+        
+        return result_data
         
     except Exception as e:
-        publish_progress(job_id, "error", f"Search failed: {str(e)}", fatal=True)
+        print(f"❌ Error in deep_search_task: {e}")
         
-        job = db.query(SearchJob).filter(SearchJob.id == job_id).first()
-        if job:
-            job.status = JobStatus.FAILED
-            job.error = str(e)
-            db.commit()
-        
+        # Retry with exponential backoff
         if self.request.retries < self.max_retries:
-            raise self.retry(exc=e, countdown=10)
-        raise
+            retry_delay = 10 * (2 ** self.request.retries)  # 10s, 20s, 40s
+            publish_progress(
+                job_id,
+                "reasoning",
+                f"Encountered an issue, retrying in {retry_delay}s..."
+            )
+            raise self.retry(exc=e, countdown=retry_delay)
         
-    finally:
-        db.close()
-
-
-@celery_app.task(bind=True, max_retries=2, queue='scraper_queue')
-def scrape_content_task(self, job_id: str, angle: Dict, index: int, total: int, original_query: str):
-    """
-    Scraper task - runs Playwright directly (NO HTTP calls!)
-    Runs on scraper workers only
-    """
-    try:
+        # Max retries reached - mark as failed
         publish_progress(
             job_id,
-            "reasoning",
-            f"Scraping: {angle['description']} ({index}/{total})"
+            "error",
+            f"Search failed after multiple attempts: {str(e)}"
         )
-        
-        # Generate URLs from search query (mock for now - replace with actual search)
-        urls = generate_urls_from_query(angle['search_query'])
-        
-        # Run async scraper in sync context
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         
         try:
-            scraped_data = loop.run_until_complete(
-                scrape_and_extract(
-                    urls=urls,
-                    query=original_query,
-                    concurrency=5
-                )
-            )
-        finally:
-            loop.close()
+            db = SessionLocal()
+            job = db.query(SearchJob).filter(SearchJob.id == job_id).first()
+            if job:
+                job.status = JobStatus.FAILED
+                job.result = json.dumps({"error": str(e)})
+                db.commit()
+            db.close()
+        except:
+            pass
         
-        if not scraped_data or not scraped_data.get('results'):
-            raise Exception("No results from scraper")
-        
-        publish_progress(
-            job_id,
-            "content",
-            f"✓ Found {len(scraped_data['results'])} sources for: {angle['description']}"
-        )
-        
-        return {
-            "angle": angle,
-            "data": scraped_data
-        }
-        
-    except Exception as e:
-        publish_progress(job_id, "error", f"Failed to scrape '{angle['description']}': {str(e)}")
-        
-        if self.request.retries < self.max_retries:
-            raise self.retry(exc=e, countdown=5)
-        
-        return None
+        raise
 
+# ============================================================================
+# Health Check
+# ============================================================================
 
-def generate_urls_from_query(search_query: str) -> List[str]:
-    """
-    Generate URLs from search query
-    TODO: Replace with actual search engine API (Google, Bing, etc.)
-    """
-    # Mock URLs - replace with actual search results
-    return [
-        f"https://example.com/search?q={search_query}",
-        f"https://news.example.com/{search_query.replace(' ', '-')}",
-        f"https://blog.example.com/article/{search_query.replace(' ', '-')}"
-    ]
-
-
-def analyze_query_with_llm(query: str) -> Dict[str, Any]:
-    """Use LLM to analyze query - REPLACE WITH CLAUDE API"""
-    time.sleep(1)
-    return {
-        "search_angles": [
-            {
-                "description": "Recent developments and news",
-                "search_query": f"{query} recent news 2024"
-            },
-            {
-                "description": "Technical details",
-                "search_query": f"{query} technical documentation"
-            },
-            {
-                "description": "Expert analysis",
-                "search_query": f"{query} expert analysis"
-            }
-        ]
-    }
-
-
-def synthesize_with_llm(query: str, scraped_content: List[Dict]) -> Dict[str, Any]:
-    """Synthesize with LLM - REPLACE WITH CLAUDE API"""
-    time.sleep(2)
-    
-    total_sources = sum(
-        len(item['data'].get('results', [])) 
-        for item in scraped_content if item and item.get('data')
-    )
-    
-    return {
-        "key_findings": [
-            "Finding from scraped content",
-            "Another insight from sources"
-        ],
-        "source_count": total_sources
-    }
-
-
-def format_answer_with_llm(query: str, synthesis: Dict) -> Dict[str, Any]:
-    """Format answer with LLM - REPLACE WITH CLAUDE API"""
-    time.sleep(1)
-    return {
-        "answer": f"Based on {synthesis['source_count']} sources about '{query}'...",
-        "sources": synthesis.get('key_findings', []),
-        "confidence": "high"
-    }
+@celery_app.task(name='tasks.health_check')
+def health_check():
+    """Simple health check task"""
+    return {"status": "healthy", "worker": "llm"}
