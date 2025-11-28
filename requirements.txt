@@ -14,8 +14,7 @@ pydantic==2.10.6
 
 # HTTP client (for LLM API calls)
 requests==2.32.3
+aiohttp==3.10.11   
 
-# Optional: Add anthropic SDK when you integrate Claude API
-# anthropic==0.25.0
-
-# That's it! ~200MB total
+anthropic==0.39.0              # Claude API
+python-dotenv==1.0.1           # Environment variables
