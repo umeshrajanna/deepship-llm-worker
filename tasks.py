@@ -14,28 +14,28 @@ import redis
 # Import the deep search generator
 from deep_search import EnhancedMarkdownReportGenerator
 
-# # Redis client for pub/sub progress updates
-# redis_client = redis.Redis(
-#     host='localhost',  # Update with your Redis host
-#     port=6379,
-#     db=0,
-#     decode_responses=True
-# )
-
 import os
 
-redis_client = redis.Redis(
-    host=os.getenv('REDIS_HOST', 'localhost'),  # ✅ Use environment variable
-    port=int(os.getenv('REDIS_PORT', 6379)),
-    db=0,
-    decode_responses=True,
-    socket_connect_timeout=5,
-    socket_timeout=5,
-    retry_on_timeout=True
-)
-# Import scraper task signature for type hints
-# from tasks import scrape_content_task  # This will be in scraper worker
+# Get Redis URL from environment
+redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+try:
+    redis_client = redis.from_url(
+        redis_url,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        retry_on_timeout=True
+    )
+    # Test connection
+    redis_client.ping()
+    print(f"[REDIS] ✅ Connected: {redis_url.split('@')[-1]}")  # Hide password if present
+except redis.ConnectionError as e:
+    print(f"[REDIS] ⚠️ Connection failed: {e}")
+    redis_client = None
+except Exception as e:
+    print(f"[REDIS] ⚠️ Error: {e}")
+    redis_client = None
 
 # ============================================================================
 # HELPER: Publish Progress Updates
