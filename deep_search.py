@@ -960,15 +960,21 @@ class EnhancedHTMLAppGenerator:
         stage_num += 1
         self._log("STAGE", f"=== STAGE {stage_num}: Generating Markdown Report ===")
                 
-        markdown = await self._generate_markdown(
+        # markdown = await self._generate_markdown(
+        #     user_prompt,
+        #     all_search_results,
+        #     scraped_results,
+        #     structured_data
+        # )
+        
+        html = await self._generate_html(
             user_prompt,
             all_search_results,
             scraped_results,
             structured_data
         )
-        
-        self._log("COMPLETE", f"Generated {len(markdown)} characters")
-        yield {"type":"markdown","content":markdown}
+        self._log("COMPLETE", f"Generated {len(html)} characters")
+        yield {"type":"markdown","content":html}
         
         # ========================================================================
         # STAGE 6: Generate Research Analysis Summary
@@ -982,7 +988,7 @@ class EnhancedHTMLAppGenerator:
                 all_search_results,
                 scraped_results,
                 structured_data,
-                markdown
+                html
             )
             
             yield {"type": "analysis_summary", "content": analytical_summary}
