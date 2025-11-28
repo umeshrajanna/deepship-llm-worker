@@ -23,7 +23,7 @@ from query_transformer import EnhancedQueryTransformer
 
 from anthropic import AsyncAnthropic
 import os
-client = AsyncAnthropic(api_key=os.getenv("LLM_KEY"))
+client = AsyncAnthropic(api_key=os.getenv("LLM_API_KEY"))
 
 # Google Custom Search API credentials
 GOOGLE_API_KEY = "AIzaSyDGUJz3wavssYikx5wDq0AcD2QlRt4vS5c"
@@ -393,7 +393,7 @@ Your extracted JSON:"""
             # )
             
             import anthropic
-            client = anthropic.Anthropic(api_key=os.getenv("LLM_KEY"))
+            client = anthropic.Anthropic(api_key=os.getenv("LLM_API_KEY"))
             message = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=8000,  # INCREASED from 3000
@@ -721,7 +721,7 @@ class EnhancedHTMLAppGenerator:
             # )
             
             import anthropic
-            client = anthropic.Anthropic(api_key=os.getenv("LLM_KEY"))
+            client = anthropic.Anthropic(api_key=os.getenv("LLM_API_KEY"))
          
             message = client.messages.create(
             model="claude-sonnet-4-20250514",
@@ -1831,7 +1831,7 @@ Generate the complete HTML now. Start with: <!DOCTYPE html>"""
         #     temperature=0.7
         # )
         import anthropic
-        client = anthropic.Anthropic(api_key=os.getenv("LLM_KEY"))
+        client = anthropic.Anthropic(api_key=os.getenv("LLM_API_KEY"))
         message = client.messages.create(
             model="claude-sonnet-4-20250514",
             system=system_prompt,
