@@ -14,7 +14,7 @@ import re
 import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Optional, Union, Tuple
-from openai import AsyncOpenAI
+# from openai import AsyncOpenAI
 import aiohttp
 from pathlib import Path
 
