@@ -21,9 +21,12 @@ from pathlib import Path
 # Import the enhanced transformer
 from query_transformer import EnhancedQueryTransformer
 
-from anthropic import AsyncAnthropic
+from anthropic import Anthropic
 import os
-client = AsyncAnthropic(api_key=os.getenv("LLM_API_KEY"))
+
+from dotenv import load_dotenv
+load_dotenv()
+client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 # Google Custom Search API credentials
 GOOGLE_API_KEY = "AIzaSyDGUJz3wavssYikx5wDq0AcD2QlRt4vS5c"
@@ -212,10 +215,13 @@ class WebScraper:
 class WebSearcher:
     """Enhanced web searcher with better result handling"""
     
+   
+    from typing import List, Dict
+
     @staticmethod
-    async def search_google(query: str, num_results: int = 10) -> List[Dict]:
+    def search_google(query: str, num_results: int = 10) -> List[Dict]:
         """
-        Perform Google Custom Search
+        Perform Google Custom Search (SYNC version)
         Returns: List of {title, link, snippet}
         """
         url = "https://www.googleapis.com/customsearch/v1"
@@ -223,32 +229,35 @@ class WebSearcher:
             "key": GOOGLE_API_KEY,
             "cx": GOOGLE_CSE_ID,
             "q": query,
-            "num": min(num_results, 10)  # Google API max is 10
+            "num": min(num_results, 10)
         }
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params) as response:
-                    if response.status != 200:
-                        print(f"[SEARCH] Error: Status {response.status}")
-                        return []
-                    
-                    data = await response.json()
-                    
-                    results = []
-                    for item in data.get('items', []):
-                        results.append({
-                            'title': item.get('title', ''),
-                            'link': item.get('link', ''),
-                            'snippet': item.get('snippet', '')
-                        })
-                    
-                    return results
-                    
+            import requests
+            response = requests.get(url, params=params, timeout=10)
+            
+            if response.status_code != 200:
+                print(f"[SEARCH] Error: Status {response.status_code}")
+                return []
+            
+            data = response.json()
+            
+            results = []
+            for item in data.get('items', []):
+                results.append({
+                    'title': item.get('title', ''),
+                    'link': item.get('link', ''),
+                    'snippet': item.get('snippet', '')
+                })
+            
+            return results
+            
+        except requests.exceptions.Timeout:
+            print(f"[SEARCH] Request timed out")
+            return []
         except Exception as e:
             print(f"[SEARCH] Exception: {e}")
             return []
-
 
 class DataExtractor:
     """Extracts structured data from search results and scraped content"""
@@ -393,7 +402,7 @@ Your extracted JSON:"""
             # )
             
             import anthropic
-            client = anthropic.Anthropic(api_key=os.getenv("LLM_API_KEY"))
+            client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
             message = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=8000,  # INCREASED from 3000
@@ -721,7 +730,7 @@ class EnhancedHTMLAppGenerator:
             # )
             
             import anthropic
-            client = anthropic.Anthropic(api_key=os.getenv("LLM_API_KEY"))
+            client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
          
             message = client.messages.create(
             model="claude-sonnet-4-20250514",
@@ -812,7 +821,7 @@ class EnhancedHTMLAppGenerator:
         for i, query in enumerate(search_queries, 1):
             self._log("SEARCH", f"[{i}/{len(search_queries)}] {query}")
             
-            results = await self.searcher.search_google(query, num_results=10)
+            results = self.searcher.search_google(query, num_results=10)
             all_search_results[query] = results
             
             currentUrls = []
@@ -850,35 +859,19 @@ class EnhancedHTMLAppGenerator:
             
             primary_query = search_queries[0] if search_queries else user_prompt
             
-            # ====================================================================
-            # ✅ CRITICAL: CHECK IF CALLBACK IS INJECTED (queue-based) OR USE DIRECT SCRAPER (standalone)
-            # ====================================================================
-            
+         
             if self.scraper_callback:
-                # ================================================================
-                # QUEUE-BASED MODE: Call scraper worker via callback
-                # ================================================================
-                print("=" * 80)
-                print("[DEEP_SEARCH] Using scraper callback (queue-based mode)")
-                print("=" * 80)
-                print(f"Calling scraper with {len(urls_to_scrape)} URLs")
-                print(f"Primary query: {primary_query}")
-                print(f"Original query: {user_prompt}")
-                print("=" * 80)
-                
+               
                 try:
                     # Call the injected callback (LLM worker will send to scraper queue)
-                    scraped_results = self.scraper_callback(
+                    scraped_results =  await asyncio.to_thread(
+                        self.scraper_callback,
                         urls_to_scrape,
                         primary_query,
                         user_prompt  # original_query
-                    )
-                    
-                    print(f"[DEEP_SEARCH] Scraper callback returned: {type(scraped_results)}")
-                    
+                    ) 
                     if scraped_results:
-                        successful_scrapes = [s for s in scraped_results if not s.get('error')]
-                        self._log("SCRAPER", f"Successfully scraped {len(successful_scrapes)}/{len(scraped_results)} URLs")
+                        successful_scrapes = [s for s in scraped_results if not s.get('error')] 
                         
                         for scrape in successful_scrapes:
                             self._log("SCRAPER", 
@@ -898,15 +891,7 @@ class EnhancedHTMLAppGenerator:
                     scraped_results = []
                     
             else:
-                # ================================================================
-                # STANDALONE MODE: Use direct scraper (original behavior)
-                # ================================================================
-                print("=" * 80)
-                print("[DEEP_SEARCH] Using direct scraper (standalone mode)")
-                print("=" * 80)
-                print(f"Calling NoirScraper API with {len(urls_to_scrape)} URLs")
-                print("=" * 80)
-                
+              
                 async for result in self.scraper.scrape_urls(
                     urls_to_scrape,
                     primary_query,
@@ -1831,7 +1816,7 @@ Generate the complete HTML now. Start with: <!DOCTYPE html>"""
         #     temperature=0.7
         # )
         import anthropic
-        client = anthropic.Anthropic(api_key=os.getenv("LLM_API_KEY"))
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         message = client.messages.create(
             model="claude-sonnet-4-20250514",
             system=system_prompt,

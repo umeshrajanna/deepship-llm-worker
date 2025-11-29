@@ -15,15 +15,18 @@ from typing import List, Dict
 # from openai import AsyncOpenAI
 from typing import Optional
 import os
-from anthropic import AsyncAnthropic
-key = os.getenv("LLM_API_KEY")
-client = AsyncAnthropic(api_key=key)
+from anthropic import Anthropic
+
+from dotenv import load_dotenv
+load_dotenv()
+key = os.getenv("ANTHROPIC_API_KEY")
+client = Anthropic(api_key=key)
  
 class EnhancedQueryTransformer:
     """Advanced query transformation with multi-search support"""
     
         
-    @staticmethod
+    # @staticmethod
     async def get_transformed_query(
         self,
         query: str,
@@ -104,13 +107,21 @@ Query: "Compare GDP of US vs China in 2024"
 Now analyze the user's query and return ONLY the JSON:"""
 
         try:
+            try:
             # Call Claude API
-            response = await client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=1000,
-                temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
-            )
+                response = client.messages.create(
+                            model="claude-sonnet-4-20250514",
+                            max_tokens=1000,
+                            temperature=0.3,
+                            messages=[{"role": "user", "content": prompt}]
+                        )
+                
+            except asyncio.TimeoutError:
+                print("❌ API call timed out after 60 seconds")
+                raise Exception("Anthropic API timeout")
+            except Exception as e:
+                print(f"❌ API call failed: {e}")
+                raise
             
             # Extract response text
             extracted_text = response.content[0].text.strip()
@@ -346,3 +357,15 @@ class QueryTransformer:
             "web_search_needed": result["web_search_needed"],
             "search_query": result["search_queries"][0] if result["search_queries"] else ""
         }
+ 
+import asyncio
+
+async def main():
+    # Iterate through async generator
+    generator = EnhancedQueryTransformer()
+    async for value in generator.get_transformed_query("London weather next week"):
+        print(f"Received: {value}")
+
+# Run it
+if __name__ == "__main__":
+    asyncio.run(main())

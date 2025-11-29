@@ -6,27 +6,28 @@ import asyncio
 import json
 import redis
 from typing import Dict
+from llm_worker import celery_app
 
 # Celery app configuration
-celery_app = Celery(
-    'llm_worker',
-    broker=os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0'),
-    backend=os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
-)
+# celery_app = Celery(
+#     'llm_worker',
+#     broker=os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0'),
+#     backend=os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+# )
 
-celery_app.conf.update(
-    task_serializer='json',
-    accept_content=['json'],
-    result_serializer='json',
-    timezone='UTC',
-    enable_utc=True,
-    task_routes={
-        'tasks.deep_search_task': {'queue': 'llm'},
-        'tasks.scrape_content_task': {'queue': 'scraper_queue'},
-    },
-    task_track_started=True,
-    result_expires=3600,
-)
+# celery_app.conf.update(
+#     task_serializer='json',
+#     accept_content=['json'],
+#     result_serializer='json',
+#     timezone='UTC',
+#     enable_utc=True,
+#     task_routes={
+#         'tasks.deep_search_task': {'queue': 'llm'},
+#         'tasks.scrape_content_task': {'queue': 'scraper_queue'},
+#     },
+#     task_track_started=True,
+#     result_expires=3600,
+# )
 
 # Redis client for progress updates
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -266,6 +267,7 @@ def deep_search_task(self, job_id: str, query: str, conversation_history: list =
 
 @celery_app.task(name='tasks.health_check')
 def health_check():
+    print("running")
     """Health check task"""
     return {
         "status": "healthy",

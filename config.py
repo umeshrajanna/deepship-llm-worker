@@ -16,7 +16,7 @@ class Config:
     SCRAPER_API_URL: str = os.getenv("SCRAPER_API_URL", "http://localhost:8001")
     
     # LLM API (adjust based on your provider)
-    LLM_API_KEY: Optional[str] = os.getenv("LLM_API_KEY")
+    ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
     LLM_API_URL: str = os.getenv("LLM_API_URL", "https://api.openai.com/v1")
     
     # Task settings
