@@ -40,7 +40,7 @@ class WebScraper:
     """Web scraper using NoirScraper API"""
     
     @staticmethod
-    async def scrape_urls(
+    def scrape_urls(
         urls: List[str],
         query: str,
         timeout: int = 30,
@@ -80,8 +80,8 @@ class WebScraper:
         }
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
+            with aiohttp.ClientSession() as session:
+                with session.post(
                     NOIR_SCRAPER_URL,
                     json=payload,
                     timeout=aiohttp.ClientTimeout(total=timeout)
@@ -101,7 +101,7 @@ class WebScraper:
                             'error': f'HTTP {response.status}'
                         } for url in urls]
                     
-                    data = await response.json()
+                    data = response.json()
                     
                     # Handle NoirScraper's response format: {"ok": true, "results": [...]}
                     if isinstance(data, dict):
@@ -263,7 +263,7 @@ class DataExtractor:
     """Extracts structured data from search results and scraped content"""
     
     @staticmethod
-    async def extract_structured_data(
+    def extract_structured_data(
         search_results: Dict[str, List[Dict]],
         scraped_results: List[Dict],
         data_types: List[str],
@@ -497,7 +497,7 @@ class EnhancedHTMLAppGenerator:
         if self.verbose or step in ["STAGE", "ERROR"]:
             print(f"[{step}] {message}")
     
-    async def develop_app(
+    def develop_app(
         self,
         user_prompt: str,
         conversation_history: Optional[List[Dict]] = None,
@@ -541,7 +541,7 @@ class EnhancedHTMLAppGenerator:
         
         # Reconstruct conversation context if provided
         if conversation_history:
-            await self._reconstruct_context(conversation_history)
+            self._reconstruct_context(conversation_history)
         
         self.user_queries.append(user_prompt)
         html = None
@@ -550,7 +550,7 @@ class EnhancedHTMLAppGenerator:
             # Full research pipeline with optional scraping
             yield {"type":"reasoning","content":"Developing app with a multi-stage pipeline"}
             
-            async for result in self._develop_with_research_pipeline(
+            for result in self._develop_with_research_pipeline(
                 user_prompt,
                 enable_scraping=enable_scraping
             ):
@@ -565,7 +565,7 @@ class EnhancedHTMLAppGenerator:
             # )
         else:
             # Simple single-stage (original behavior)
-            html = await self._develop_simple(user_prompt)
+            html = self._develop_simple(user_prompt)
         
         # Return based on flag
         if return_conversation:
@@ -587,7 +587,7 @@ class EnhancedHTMLAppGenerator:
         """
         return self.conversation_history.copy()
     
-    async def _reconstruct_context(self, history: List[Dict]):
+    def _reconstruct_context(self, history: List[Dict]):
         """Reconstruct conversation context from history"""
         
         self._log("CONTEXT", f"Reconstructing from {len(history)} messages")
@@ -627,7 +627,7 @@ class EnhancedHTMLAppGenerator:
         
         self._log("CONTEXT", f"Has existing HTML: {self.current_html is not None}")
     
-    async def _generate_research_summary(
+    def _generate_research_summary(
     self,
     user_query: str,
     search_results: Dict[str, List[Dict]],
@@ -749,7 +749,7 @@ class EnhancedHTMLAppGenerator:
             return f"Unable to generate analytical summary: {e}"
         
         
-    async def _develop_with_research_pipeline(
+    def _develop_with_research_pipeline(
         self,
         user_prompt: str,
         enable_scraping: bool = True
@@ -771,9 +771,11 @@ class EnhancedHTMLAppGenerator:
         # ========================================================================
         self._log("STAGE", "=== STAGE 1: Query Transformation ===")
         
+        start = datetime.now
+        
         transform_result = None
         
-        async for result in self.transformer.get_transformed_query(
+        for result in self.transformer.get_transformed_query(
             user_prompt,
             self.user_queries[:-1]
         ):
@@ -805,7 +807,7 @@ class EnhancedHTMLAppGenerator:
             self._log("STAGE", "No research needed, generating directly")
             yield {"type": "reasoning","content":"Developing report..."}
         
-            markdown = await self._generate_html(user_prompt, {}, [], {})
+            markdown = self._generate_html(user_prompt, {}, [], {})
             yield {"type":"markdown","content":markdown}
             return
         
@@ -825,11 +827,14 @@ class EnhancedHTMLAppGenerator:
             all_search_results[query] = results
             
             currentUrls = []
+            temp = []
             # Collect URLs for scraping
             for result in results:
                 if result['link'] not in all_urls:
-                    all_urls.append(result['link'])
+                    temp.append(result['link'])
                     currentUrls.append(result['link'])
+            
+            all_urls.extend(temp[0:5])
             
             content = {"transformed_query":query,"urls":currentUrls}
             yield {"type":"sources","content":content}
@@ -838,7 +843,8 @@ class EnhancedHTMLAppGenerator:
             
             # Small delay to avoid rate limits
             if i < len(search_queries):
-                await asyncio.sleep(0.3)
+                import time
+                time.sleep(0.3)
         
         yield {"type": "reasoning","content":f"found {len(all_urls)} sources..."}
         
@@ -851,7 +857,8 @@ class EnhancedHTMLAppGenerator:
             self._log("STAGE", f"=== STAGE 3: Scraping Top {min(len(all_urls), self.max_urls_to_scrape)} URLs ===")
             yield {"type": "reasoning","content":f"performing deep analysis... "}
                 
-            urls_to_scrape = all_urls[:self.max_urls_to_scrape]
+            # urls_to_scrape = all_urls[:self.max_urls_to_scrape]
+            urls_to_scrape = all_urls
             
             self._log("SCRAPER", f"Scraping {len(urls_to_scrape)} URLs...")
             for url in urls_to_scrape:
@@ -864,12 +871,11 @@ class EnhancedHTMLAppGenerator:
                
                 try:
                     # Call the injected callback (LLM worker will send to scraper queue)
-                    scraped_results =  await asyncio.to_thread(
-                        self.scraper_callback,
+                    scraped_results =   self.scraper_callback(
                         urls_to_scrape,
                         primary_query,
                         user_prompt  # original_query
-                    ) 
+                    )
                     if scraped_results:
                         successful_scrapes = [s for s in scraped_results if not s.get('error')] 
                         
@@ -892,7 +898,7 @@ class EnhancedHTMLAppGenerator:
                     
             else:
               
-                async for result in self.scraper.scrape_urls(
+                for result in self.scraper.scrape_urls(
                     urls_to_scrape,
                     primary_query,
                     timeout=self.scrape_timeout,
@@ -925,7 +931,7 @@ class EnhancedHTMLAppGenerator:
         
         try:
             yield {"type": "reasoning","content":f"developing assets..."}
-            structured_data = await self.extractor.extract_structured_data(
+            structured_data =  self.extractor.extract_structured_data(
                 all_search_results,
                 scraped_results,
                 data_types,
@@ -943,7 +949,7 @@ class EnhancedHTMLAppGenerator:
         # STAGE 5: Generate Markdown Report
         # ========================================================================
         stage_num += 1
-        self._log("STAGE", f"=== STAGE {stage_num}: Generating Markdown Report ===")
+        self._log("STAGE", f"=== STAGE {stage_num}: Generating HTML ===")
                 
         # markdown = await self._generate_markdown(
         #     user_prompt,
@@ -952,14 +958,14 @@ class EnhancedHTMLAppGenerator:
         #     structured_data
         # )
         
-        html = await self._generate_html(
+        html = self._generate_html(
             user_prompt,
             all_search_results,
             scraped_results,
             structured_data
         )
         self._log("COMPLETE", f"Generated {len(html)} characters")
-        yield {"type":"markdown","content":html}
+        yield {"type":"html","content":html}
         
         # ========================================================================
         # STAGE 6: Generate Research Analysis Summary
@@ -968,7 +974,7 @@ class EnhancedHTMLAppGenerator:
         yield {"type": "reasoning", "content": "Analyzing research thought process..."}
         
         try:
-            analytical_summary = await self._generate_research_summary(
+            analytical_summary = self._generate_research_summary(
                 user_prompt,
                 all_search_results,
                 scraped_results,
@@ -981,13 +987,13 @@ class EnhancedHTMLAppGenerator:
             self._log("ERROR", f"Failed to generate analytical summary: {e}")
             yield {"type": "analysis_summary", "content": f"Unable to generate summary: {e}"}
             
-    async def _develop_simple(self, user_prompt: str) -> str:
+    def _develop_simple(self, user_prompt: str) -> str:
         """Simple single-stage generation (original behavior)"""
         
         # Use old transformer interface
         # from enhanced_query_transformer import QueryTransformer
         
-        transform_result = await self.transformer.get_transformed_query(
+        transform_result = self.transformer.get_transformed_query(
             user_prompt,
             self.user_queries[:-1]
         )
@@ -998,17 +1004,17 @@ class EnhancedHTMLAppGenerator:
         
         if transform_result['web_search_needed'] and transform_result['search_query']:
             query = transform_result['search_query']
-            results = await self.searcher.search_google(query, num_results=5)
+            results =  self.searcher.search_google(query, num_results=5)
             search_results[query] = results
         
-        return await self._generate_html(
+        return  self._generate_html(
             user_prompt,
             search_results,
             scraped_results,
             structured_data
         )
     
-#     async def _generate_html(
+#     def _generate_html(
 #         self,
 #         user_query: str,
 #         search_results: Dict[str, List[Dict]],
@@ -1239,7 +1245,7 @@ class EnhancedHTMLAppGenerator:
 #         })
         
 #         return html_content
-#     async def _generate_html_extended_output(
+#     def _generate_html_extended_output(
 #         self,
 #         user_query: str,
 #         search_results: Dict[str, List[Dict]],
@@ -1619,7 +1625,8 @@ class EnhancedHTMLAppGenerator:
 #         })
         
 #         return html_content
-    async def _generate_html(
+
+    def _generate_html(
         self,
         user_query: str,
         search_results: Dict[str, List[Dict]],
@@ -1818,10 +1825,14 @@ Generate the complete HTML now. Start with: <!DOCTYPE html>"""
         import anthropic
         client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-opus-4-20250514",
             system=system_prompt,
-            max_tokens= 12000,  # Increased token limit
+            max_tokens= 16000,  # Increased token limit
             messages=self.conversation_history,
+            # thinking={
+            #     "type": "enabled",
+            #     "budget_tokens": 10000  # Extra thinking tokens
+            # },
         )
           
         duration = (datetime.now() - start_time).total_seconds()
@@ -2010,7 +2021,7 @@ Your job is to use 100% of it to create an exhaustive, beautiful application."""
         else:
             return base_rules + "\n\n**MODE:** You will CREATE a new application from scratch."
         
-    async def generate_report(
+    def generate_report(
         self,
         user_query: str,
         search_results: Dict[str, List[Dict]],
@@ -2029,7 +2040,7 @@ Your job is to use 100% of it to create an exhaustive, beautiful application."""
         if self.verbose:
             self._log("REPORT", "Generating markdown report...")
         
-        markdown_content = await self._generate_html(
+        markdown_content = self._generate_html(
             user_query=user_query,
             search_results=search_results,
             scraped_results=scraped_results,
@@ -2043,7 +2054,7 @@ Your job is to use 100% of it to create an exhaustive, beautiful application."""
         if self.verbose:
             self._log("REPORT", "Converting markdown to HTML...")
         
-        html_content = await self._generate_html_from_markdown(
+        html_content =  self._generate_html_from_markdown(
             markdown_content=markdown_content
         )
         
@@ -2148,7 +2159,7 @@ TECHNICAL REQUIREMENTS:
 
 
 # Example usage
-async def example_usage():
+def example_usage():
     prompt = "" 
 
 if __name__ == "__main__":

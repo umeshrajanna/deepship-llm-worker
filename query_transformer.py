@@ -27,7 +27,7 @@ class EnhancedQueryTransformer:
     
         
     # @staticmethod
-    async def get_transformed_query(
+    def get_transformed_query(
         self,
         query: str,
         previous_queries: Optional[List[str]] = None
@@ -111,7 +111,7 @@ Now analyze the user's query and return ONLY the JSON:"""
             # Call Claude API
                 response = client.messages.create(
                             model="claude-sonnet-4-20250514",
-                            max_tokens=1000,
+                            max_tokens=4000,
                             temperature=0.3,
                             messages=[{"role": "user", "content": prompt}]
                         )
@@ -339,7 +339,7 @@ class QueryTransformer:
     """Wrapper for backward compatibility with old single-query interface"""
     
     @staticmethod
-    async def get_transformed_query(
+    def get_transformed_query(
         user_query: str, 
         past_user_queries: List[str]
     ) -> dict:
@@ -347,7 +347,7 @@ class QueryTransformer:
         Returns format compatible with old code (single search_query)
         Use EnhancedQueryTransformer directly for multi-query support
         """
-        result = await EnhancedQueryTransformer.get_transformed_query(
+        result = EnhancedQueryTransformer.get_transformed_query(
             user_query, 
             past_user_queries
         )
@@ -360,10 +360,10 @@ class QueryTransformer:
  
 import asyncio
 
-async def main():
+def main():
     # Iterate through async generator
     generator = EnhancedQueryTransformer()
-    async for value in generator.get_transformed_query("London weather next week"):
+    for value in generator.get_transformed_query("London weather next week"):
         print(f"Received: {value}")
 
 # Run it

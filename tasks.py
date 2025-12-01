@@ -51,7 +51,7 @@ def publish_progress(job_id: str, update: Dict):
         return
     
     try:
-        channel = f"job:{job_id}:progress"
+        channel = f"job:{job_id}"
         redis_client.publish(channel, json.dumps(update))
     except Exception as e:
         print(f"[PROGRESS] Failed: {e}")
@@ -63,7 +63,7 @@ from deep_search import EnhancedHTMLAppGenerator
 # Helper: Call Scraper and Wait
 # ============================================================================
 
-async def call_scraper_and_wait(
+def call_scraper_and_wait(
     job_id: str,
     urls: list,
     search_query: str,
@@ -109,6 +109,7 @@ async def call_scraper_and_wait(
 
 @celery_app.task(
     bind=True,
+    result_extended=False ,
     max_retries=1,
     soft_time_limit=900,
     time_limit=960,
@@ -142,9 +143,14 @@ def deep_search_task(self, job_id: str, query: str, conversation_history: list =
         )
         
         # ✅ INJECT CALLBACKS
-        generator.scraper_callback = lambda urls, sq, oq: asyncio.run(
-            call_scraper_and_wait(job_id, urls, sq, oq)
+        # generator.scraper_callback = lambda urls, sq, oq: asyncio.run(
+        #     call_scraper_and_wait(job_id, urls, sq, oq)
+        # )
+        
+        generator.scraper_callback = lambda urls, sq, oq: call_scraper_and_wait(
+            job_id, urls, sq, oq
         )
+        
         generator.progress_callback = lambda update: publish_progress(job_id, update)
         
         print("✅ Generator initialized with callbacks")
@@ -153,11 +159,11 @@ def deep_search_task(self, job_id: str, query: str, conversation_history: list =
         final_html = None  # ✅ Changed from final_markdown
         analysis_summary = None
         
-        async def run_pipeline():
+        def run_pipeline():
             nonlocal final_html, analysis_summary
             
             # ✅ Call develop_app (NOT develop_report)
-            async for result in generator.develop_app(
+            for result in generator.develop_app(
                 user_prompt=query,
                 conversation_history=conversation_history,
                 use_multi_stage=True,
@@ -181,7 +187,8 @@ def deep_search_task(self, job_id: str, query: str, conversation_history: list =
                 elif result_type == "done":
                     print(f"✅ Development complete")
         
-        asyncio.run(run_pipeline())
+        # asyncio.run(run_pipeline())
+        run_pipeline()
         
         # ✅ Check for HTML not markdown
         if not final_html:
@@ -193,13 +200,23 @@ def deep_search_task(self, job_id: str, query: str, conversation_history: list =
         result_data = {
             "job_id": job_id,
             "status": "completed",
-            "html": final_html,  # ✅ Changed from "markdown"
+            "html": final_html[1:10],  # ✅ Changed from "markdown"
             "analysis_summary": analysis_summary or "Analysis not available",
             "conversation_history": generator.get_conversation_history()
         }
         
         print("=" * 80)
         print("✅ DEEP SEARCH TASK COMPLETED")
+        
+        import random
+        random_num = random.randint(1, 100)
+        filename = f"output_{random_num}.html"
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(final_html)
+        
+        print(f"✅ Saved to {filename}")
+        
         print("=" * 80)
         print(f"Job ID: {job_id}")
         print(f"HTML length: {len(final_html)}")  # ✅ Changed from "Markdown length"
