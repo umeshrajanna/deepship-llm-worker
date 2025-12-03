@@ -39,6 +39,9 @@ NOIR_SCRAPER_URL = "https://noirscraper-production.up.railway.app/scrape_and_ext
 class WebScraper:
     """Web scraper using NoirScraper API"""
     
+class WebScraper:
+    """Web scraper using NoirScraper API"""
+    
     @staticmethod
     def scrape_urls(
         urls: List[str],
@@ -48,7 +51,7 @@ class WebScraper:
         concurrency: int = 10
     ) -> List[Dict]:
         """
-        Scrape multiple URLs using NoirScraper API
+        Scrape multiple URLs using NoirScraper API (SYNCHRONOUS)
         
         Args:
             urls: List of URLs to scrape
@@ -80,15 +83,55 @@ class WebScraper:
         }
         
         try:
-            with aiohttp.ClientSession() as session:
-                with session.post(
-                    NOIR_SCRAPER_URL,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=timeout)
-                ) as response:
-                    
-                    if response.status != 200:
-                        print(f"[SCRAPER] Error: Status {response.status}")
+            import requests
+            
+            print(f"[SCRAPER] Sending request to NoirScraper for {len(urls)} URLs...")
+            
+            response = requests.post(
+                NOIR_SCRAPER_URL,
+                json=payload,
+                timeout=timeout
+            )
+            
+            if response.status_code != 200:
+                print(f"[SCRAPER] Error: Status {response.status_code}")
+                return [{
+                    'url': url,
+                    'best_chunk': '',
+                    'score': 0.0,
+                    'chunk_index': -1,
+                    'word_count': 0,
+                    'total_chunks': 0,
+                    'tables': [],
+                    'tables_count': 0,
+                    'error': f'HTTP {response.status_code}'
+                } for url in urls]
+            
+            data = response.json()
+            
+            # Handle NoirScraper's response format: {"ok": true, "results": [...]}
+            if isinstance(data, dict):
+                # Check for success
+                if not data.get('ok', False):
+                    error_msg = data.get('error', 'Unknown error')
+                    print(f"[SCRAPER] API returned error: {error_msg}")
+                    return [{
+                        'url': url,
+                        'best_chunk': '',
+                        'score': 0.0,
+                        'chunk_index': -1,
+                        'word_count': 0,
+                        'total_chunks': 0,
+                        'tables': [],
+                        'tables_count': 0,
+                        'error': error_msg
+                    } for url in urls]
+                
+                # Extract results array
+                if 'results' in data:
+                    results = data['results']
+                    if not isinstance(results, list):
+                        print(f"[SCRAPER] Results is not a list")
                         return [{
                             'url': url,
                             'best_chunk': '',
@@ -98,93 +141,58 @@ class WebScraper:
                             'total_chunks': 0,
                             'tables': [],
                             'tables_count': 0,
-                            'error': f'HTTP {response.status}'
+                            'error': 'Invalid results format'
                         } for url in urls]
                     
-                    data = response.json()
+                    # Log statistics if available
+                    if 'statistics' in data:
+                        stats = data['statistics']
+                        print(f"[SCRAPER] Stats: {stats.get('successful_scrapes', 0)}/{stats.get('urls_requested', 0)} URLs, "
+                              f"{stats.get('total_tables_found', 0)} tables, "
+                              f"avg score: {stats.get('average_relevance_score', 0):.2f}")
                     
-                    # Handle NoirScraper's response format: {"ok": true, "results": [...]}
-                    if isinstance(data, dict):
-                        # Check for success
-                        if not data.get('ok', False):
-                            error_msg = data.get('error', 'Unknown error')
-                            print(f"[SCRAPER] API returned error: {error_msg}")
-                            return [{
-                                'url': url,
-                                'best_chunk': '',
-                                'score': 0.0,
-                                'chunk_index': -1,
-                                'word_count': 0,
-                                'total_chunks': 0,
-                                'tables': [],
-                                'tables_count': 0,
-                                'error': error_msg
-                            } for url in urls]
-                        
-                        # Extract results array
-                        if 'results' in data:
-                            results = data['results']
-                            if not isinstance(results, list):
-                                print(f"[SCRAPER] Results is not a list")
-                                return [{
-                                    'url': url,
-                                    'best_chunk': '',
-                                    'score': 0.0,
-                                    'chunk_index': -1,
-                                    'word_count': 0,
-                                    'total_chunks': 0,
-                                    'tables': [],
-                                    'tables_count': 0,
-                                    'error': 'Invalid results format'
-                                } for url in urls]
-                            
-                            # Log statistics if available
-                            if 'statistics' in data:
-                                stats = data['statistics']
-                                print(f"[SCRAPER] Stats: {stats.get('successful_scrapes', 0)}/{stats.get('urls_requested', 0)} URLs, "
-                                      f"{stats.get('total_tables_found', 0)} tables, "
-                                      f"avg score: {stats.get('average_relevance_score', 0):.2f}")
-                            
-                            if 'timing' in data:
-                                timing = data['timing']
-                                print(f"[SCRAPER] Timing: scrape={timing.get('scrape_seconds', 0):.1f}s, "
-                                      f"processing={timing.get('processing_seconds', 0):.1f}s, "
-                                      f"total={data.get('total_duration_seconds', 0):.1f}s")
-                            
-                            return results
-                        else:
-                            print(f"[SCRAPER] No 'results' field in response")
-                            return [{
-                                'url': url,
-                                'best_chunk': '',
-                                'score': 0.0,
-                                'chunk_index': -1,
-                                'word_count': 0,
-                                'total_chunks': 0,
-                                'tables': [],
-                                'tables_count': 0,
-                                'error': 'No results field'
-                            } for url in urls]
+                    if 'timing' in data:
+                        timing = data['timing']
+                        print(f"[SCRAPER] Timing: scrape={timing.get('scrape_seconds', 0):.1f}s, "
+                              f"processing={timing.get('processing_seconds', 0):.1f}s, "
+                              f"total={data.get('total_duration_seconds', 0):.1f}s")
                     
-                    # Fallback: if response is directly an array (old format)
-                    elif isinstance(data, list):
-                        return data
-                    
-                    else:
-                        print(f"[SCRAPER] Unexpected response format: {type(data)}")
-                        return [{
-                            'url': url,
-                            'best_chunk': '',
-                            'score': 0.0,
-                            'chunk_index': -1,
-                            'word_count': 0,
-                            'total_chunks': 0,
-                            'tables': [],
-                            'tables_count': 0,
-                            'error': 'Invalid response format'
-                        } for url in urls]
-                    
-        except asyncio.TimeoutError:
+                    print(f"[SCRAPER] Successfully received {len(results)} scrape results")
+                    return results
+                else:
+                    print(f"[SCRAPER] No 'results' field in response")
+                    return [{
+                        'url': url,
+                        'best_chunk': '',
+                        'score': 0.0,
+                        'chunk_index': -1,
+                        'word_count': 0,
+                        'total_chunks': 0,
+                        'tables': [],
+                        'tables_count': 0,
+                        'error': 'No results field'
+                    } for url in urls]
+            
+            # Fallback: if response is directly an array (old format)
+            elif isinstance(data, list):
+                print(f"[SCRAPER] Received legacy format (array)")
+                return data
+            
+            else:
+                print(f"[SCRAPER] Unexpected response format: {type(data)}")
+                return [{
+                    'url': url,
+                    'best_chunk': '',
+                    'score': 0.0,
+                    'chunk_index': -1,
+                    'word_count': 0,
+                    'total_chunks': 0,
+                    'tables': [],
+                    'tables_count': 0,
+                    'error': 'Invalid response format'
+                } for url in urls]
+            
+        except requests.exceptions.Timeout:
             print(f"[SCRAPER] Timeout after {timeout}s")
             return [{
                 'url': url,
@@ -197,8 +205,25 @@ class WebScraper:
                 'tables_count': 0,
                 'error': 'Timeout'
             } for url in urls]
+        except requests.exceptions.RequestException as e:
+            print(f"[SCRAPER] Request exception: {e}")
+            import traceback
+            traceback.print_exc()
+            return [{
+                'url': url,
+                'best_chunk': '',
+                'score': 0.0,
+                'chunk_index': -1,
+                'word_count': 0,
+                'total_chunks': 0,
+                'tables': [],
+                'tables_count': 0,
+                'error': f'Request failed: {str(e)}'
+            } for url in urls]
         except Exception as e:
-            print(f"[SCRAPER] Exception: {e}")
+            print(f"[SCRAPER] Unexpected exception: {e}")
+            import traceback
+            traceback.print_exc()
             return [{
                 'url': url,
                 'best_chunk': '',
@@ -210,8 +235,7 @@ class WebScraper:
                 'tables_count': 0,
                 'error': str(e)
             } for url in urls]
-
-
+            
 class WebSearcher:
     """Enhanced web searcher with better result handling"""
     
@@ -454,7 +478,7 @@ class EnhancedHTMLAppGenerator:
         self, 
         enable_reasoning_capture: bool = False,
         verbose: bool = False,
-        max_search_queries: int = 10,
+        max_search_queries: int = 5,
         max_urls_to_scrape: int = 5,
         scrape_timeout: int = 180,
         scrape_chunk_size: int = 400,
@@ -762,7 +786,7 @@ class EnhancedHTMLAppGenerator:
         2. Execute all searches → gather raw data
         3. Scrape top URLs → extract deep content and tables (QUEUE-BASED OR STANDALONE)
         4. Extract structured data → parse into JSON
-        5. Generate Markdown → use rich context
+        5. Generate HTML → use rich context
         6. Generate Research Summary → analytical thought process
         """
         
@@ -807,8 +831,10 @@ class EnhancedHTMLAppGenerator:
             self._log("STAGE", "No research needed, generating directly")
             yield {"type": "reasoning","content":"Developing report..."}
         
-            markdown = self._generate_html(user_prompt, {}, [], {})
-            yield {"type":"markdown","content":markdown}
+            from iterative_html_generator import develop_html
+            html = develop_html(user_prompt, {}, [], {})
+            # html = self._generate_html(user_prompt, {}, [], {})
+            yield {"type":"html","content":html}
             return
         
         # ========================================================================
@@ -818,7 +844,7 @@ class EnhancedHTMLAppGenerator:
         
         all_search_results = {}
         all_urls = []
-        search_queries = search_queries[1:]  # Skip first query (usually too broad)
+        # search_queries = search_queries[1:]  # Skip first query (usually too broad)
         
         for i, query in enumerate(search_queries, 1):
             self._log("SEARCH", f"[{i}/{len(search_queries)}] {query}")
@@ -857,7 +883,6 @@ class EnhancedHTMLAppGenerator:
             self._log("STAGE", f"=== STAGE 3: Scraping Top {min(len(all_urls), self.max_urls_to_scrape)} URLs ===")
             yield {"type": "reasoning","content":f"performing deep analysis... "}
                 
-            # urls_to_scrape = all_urls[:self.max_urls_to_scrape]
             urls_to_scrape = all_urls
             
             self._log("SCRAPER", f"Scraping {len(urls_to_scrape)} URLs...")
@@ -866,18 +891,20 @@ class EnhancedHTMLAppGenerator:
             
             primary_query = search_queries[0] if search_queries else user_prompt
             
-         
+            # MODE 1: Queue-based (if callback is injected by tasks.py)
             if self.scraper_callback:
-               
+                print("[DEEP_SEARCH] Using queue-based scraper callback")
                 try:
                     # Call the injected callback (LLM worker will send to scraper queue)
-                    scraped_results =   self.scraper_callback(
+                    scraped_results = self.scraper_callback(
                         urls_to_scrape,
                         primary_query,
                         user_prompt  # original_query
                     )
+                    
                     if scraped_results:
                         successful_scrapes = [s for s in scraped_results if not s.get('error')] 
+                        print(f"[DEEP_SEARCH] Received {len(successful_scrapes)}/{len(scraped_results)} successful scrapes")
                         
                         for scrape in successful_scrapes:
                             self._log("SCRAPER", 
@@ -895,31 +922,34 @@ class EnhancedHTMLAppGenerator:
                     import traceback
                     traceback.print_exc()
                     scraped_results = []
-                    
+            
+            # MODE 2: Standalone (direct scraper call)
             else:
-              
-                for result in self.scraper.scrape_urls(
-                    urls_to_scrape,
-                    primary_query,
-                    timeout=self.scrape_timeout,
-                    chunk_size=self.scrape_chunk_size,
-                    concurrency=self.scrape_concurrency
-                ):
-                    if result.get("type") == "scrape_content":
-                        scraped_results = result.get("content")
-                        
-                        successful_scrapes = [s for s in scraped_results if not s.get('error')]
-                        self._log("SCRAPER", f"Successfully scraped {len(successful_scrapes)}/{len(scraped_results)} URLs")
-                        
-                        for scrape in successful_scrapes:
-                            self._log("SCRAPER", 
-                                f"  {scrape['url'][:60]}... "
-                                f"(score: {scrape['score']:.2f}, "
-                                f"tables: {scrape['tables_count']}, "
-                                f"words: {scrape['word_count']})")
+                print("[DEEP_SEARCH] Using standalone scraper (direct call)")
+                try:
+                    scraped_results = self.scraper.scrape_urls(
+                        urls_to_scrape,
+                        primary_query,
+                        timeout=self.scrape_timeout,
+                        chunk_size=self.scrape_chunk_size,
+                        concurrency=self.scrape_concurrency
+                    )
+                    
+                    successful_scrapes = [s for s in scraped_results if not s.get('error')]
+                    self._log("SCRAPER", f"Successfully scraped {len(successful_scrapes)}/{len(scraped_results)} URLs")
+                    
+                    for scrape in successful_scrapes:
+                        self._log("SCRAPER", 
+                            f"  {scrape['url'][:60]}... "
+                            f"(score: {scrape['score']:.2f}, "
+                            f"tables: {scrape['tables_count']}, "
+                            f"words: {scrape['word_count']})")
                             
-                    if result.get("type") == "error":
-                        yield result
+                except Exception as e:
+                    print(f"[DEEP_SEARCH] ❌ Error in standalone scraper: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    scraped_results = []
         else:
             self._log("STAGE", "=== STAGE 3: Skipping Web Scraping ===")
         
@@ -931,32 +961,28 @@ class EnhancedHTMLAppGenerator:
         
         try:
             yield {"type": "reasoning","content":f"developing assets..."}
-            structured_data =  self.extractor.extract_structured_data(
+            structured_data = self.extractor.extract_structured_data(
                 all_search_results,
                 scraped_results,
                 data_types,
                 user_prompt
             )
-        except asyncio.CancelledError:
-            self._log("WARNING", "Data extraction cancelled - continuing without structured data")
-            structured_data = {}
         except Exception as e:
             self._log("ERROR", f"Data extraction failed: {e}")
             self._log("WARNING", "Continuing without structured data")
             structured_data = {}
         
         # ========================================================================
-        # STAGE 5: Generate Markdown Report
+        # STAGE 5: Generate HTML
         # ========================================================================
         stage_num += 1
         self._log("STAGE", f"=== STAGE {stage_num}: Generating HTML ===")
-                
-        # markdown = await self._generate_markdown(
-        #     user_prompt,
+        
+        # from iterative_html_generator import develop_html
+        # html = develop_html(user_prompt,
         #     all_search_results,
         #     scraped_results,
-        #     structured_data
-        # )
+        #     structured_data)
         
         html = self._generate_html(
             user_prompt,
@@ -964,6 +990,7 @@ class EnhancedHTMLAppGenerator:
             scraped_results,
             structured_data
         )
+        
         self._log("COMPLETE", f"Generated {len(html)} characters")
         yield {"type":"html","content":html}
         
@@ -1824,11 +1851,21 @@ Generate the complete HTML now. Start with: <!DOCTYPE html>"""
         # )
         import anthropic
         client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        
+        system_message = None
+        filtered_messages = []
+        for msg in self.conversation_history:
+            if msg.get("role") == "system":
+                system_message = msg.get("content")
+            else:
+                filtered_messages.append(msg)
+            
         message = client.messages.create(
             model="claude-opus-4-20250514",
             system=system_prompt,
             max_tokens= 16000,  # Increased token limit
-            messages=self.conversation_history,
+            messages=filtered_messages  ,
+            
             # thinking={
             #     "type": "enabled",
             #     "budget_tokens": 10000  # Extra thinking tokens

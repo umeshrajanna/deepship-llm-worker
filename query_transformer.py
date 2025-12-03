@@ -59,7 +59,9 @@ YOUR TASK: Return a JSON object with this EXACT structure:
     "search_queries": [
         "specific search query 1",
         "specific search query 2",
-        "specific search query 3"
+        "specific search query 3",
+         "specific search query 4",
+        "specific search query 5"
     ],
     "data_extraction_needed": true,
     "data_types": ["statistics", "comparisons", "trends"]
@@ -67,7 +69,7 @@ YOUR TASK: Return a JSON object with this EXACT structure:
 
 RULES:
 1. web_search_needed: true if query needs current/factual info, false for creative/opinion tasks
-2. search_queries: List 3-5 specific, targeted search queries (NOT the original query)
+2. search_queries: List ATLEAST 5 specific, targeted search queries (NOT the original query)
 3. data_extraction_needed: true if expecting structured data (numbers, tables, comparisons)
 4. data_types: List what data to extract: ["statistics", "dates", "names", "prices", etc]
 
