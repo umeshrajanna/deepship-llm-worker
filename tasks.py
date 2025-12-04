@@ -326,15 +326,6 @@ def call_scraper_and_wait(
     time_limit=960,
     name='tasks.deep_search_task'
 )
-
-@celery_app.task(
-    bind=True,
-    result_extended=False,
-    max_retries=1,
-    soft_time_limit=900,
-    time_limit=960,
-    name='tasks.deep_search_task'
-)
 def deep_search_task(
     self, 
     job_id: str, 
@@ -357,35 +348,33 @@ def deep_search_task(
     print(f"Lab Mode: {lab_mode}")
     print(f"Files: {len(file_contents) if file_contents else 0}")
     print("=" * 80)
-    
+   
     try:
-        # Choose generator based on mode
-        if lab_mode:
-            print("[TASK] Initializing EnhancedHTMLAppGenerator...")
-            from deep_search import EnhancedHTMLAppGenerator
-            generator = EnhancedHTMLAppGenerator(
-                verbose=True,
-                max_search_queries=5,
-                max_urls_to_scrape=5,
-                scrape_timeout=600
-            )
-            generator_method = generator.develop_app
-            
-            # ✅ INJECT SCRAPER CALLBACK
-            print("[TASK] Injecting scraper callback...")
-            generator.scraper_callback = lambda urls, sq, oq: call_scraper_and_wait(
-                job_id, urls, sq, oq
-            )
-            print("[TASK] ✅ Scraper callback injected")
-            
-            # ✅ INJECT PROGRESS CALLBACK
-            print("[TASK] Injecting progress callback...")
-            generator.progress_callback = lambda update: publish_progress(job_id, update)
-            print("[TASK] ✅ Progress callback injected")
-            
-        else:
-            print("[TASK] Lab mode is False, returning early...")
-            return
+        # Choose generator based on mode        
+        print("[TASK] Initializing EnhancedHTMLAppGenerator...")
+        from deep_search import EnhancedHTMLAppGenerator
+        generator = EnhancedHTMLAppGenerator(
+            verbose=True,
+            max_search_queries=5,
+            max_urls_to_scrape=5,
+            scrape_timeout=600
+        )
+        generator.conversation_history = conversation_history
+        
+        generator_method = generator.develop_app
+        
+        # ✅ INJECT SCRAPER CALLBACK
+        print("[TASK] Injecting scraper callback...")
+        generator.scraper_callback = lambda urls, sq, oq: call_scraper_and_wait(
+            job_id, urls, sq, oq
+        )
+        print("[TASK] ✅ Scraper callback injected")
+        
+        # ✅ INJECT PROGRESS CALLBACK
+        print("[TASK] Injecting progress callback...")
+        generator.progress_callback = lambda update: publish_progress(job_id, update)
+        print("[TASK] ✅ Progress callback injected")
+         
         
         # Prepare query with file contents if present
         full_query = query
@@ -410,7 +399,7 @@ def deep_search_task(
         def run_generation():
             nonlocal final_content, final_sources, final_reasoning_steps, final_assets, final_app
             
-            for result in generator_method(full_query, conversation_history or []):
+            for result in generator_method(full_query, conversation_history or [],lab_mode):
                 result_type = result.get("type")
                 
                 # Publish reasoning/sources to Redis (for client streaming)

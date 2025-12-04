@@ -525,9 +525,11 @@ class EnhancedHTMLAppGenerator:
         self,
         user_prompt: str,
         conversation_history: Optional[List[Dict]] = None,
+        labMode = True,
         use_multi_stage: bool = True,
         enable_scraping: bool = True,
-        return_conversation: bool = True
+        return_conversation: bool = True,
+      
     ) -> Union[str, Tuple[str, List[Dict]]]:
         """
         Main entry point - generates HTML app with optional multi-stage research and scraping
@@ -576,28 +578,12 @@ class EnhancedHTMLAppGenerator:
             
             for result in self._develop_with_research_pipeline(
                 user_prompt,
-                enable_scraping=enable_scraping
-            ):
-                if result.get("type") == "html":
-                    html = result.get("content")
-                else:
-                    yield result
+                enable_scraping=enable_scraping,
+                labMode = labMode
+            ):                
+                yield result
                  
-            # html = await self._develop_with_research_pipeline(
-            #     user_prompt,
-            #     enable_scraping=enable_scraping
-            # )
-        else:
-            # Simple single-stage (original behavior)
-            html = self._develop_simple(user_prompt)
-        
-        # Return based on flag
-        if return_conversation:
-            yield {"type":"html","content":html}            
-            # return html, self.get_conversation_history()
-        else:
-            yield {"type":"html","content":html}
-            # return html
+          
         yield {"type": "reasoning","content":"App development complete."}   
         yield {"type":"done","content":""}
     
@@ -776,7 +762,8 @@ class EnhancedHTMLAppGenerator:
     def _develop_with_research_pipeline(
         self,
         user_prompt: str,
-        enable_scraping: bool = True
+        enable_scraping: bool = True,
+        labMode = True
     ) -> str:
         """
         Full multi-stage research pipeline with web scraping
@@ -832,79 +819,120 @@ class EnhancedHTMLAppGenerator:
             yield {"type": "reasoning","content":"Developing report..."}
         
             from iterative_html_generator import develop_html
-            html = develop_html(user_prompt, {}, [], {})
-            # html = self._generate_html(user_prompt, {}, [], {})
-            yield {"type":"html","content":html}
-            return
-        
-        # ========================================================================
-        # STAGE 2: Execute Web Searches
-        # ========================================================================
-        self._log("STAGE", f"=== STAGE 2: Executing {len(search_queries)} Searches ===")
-        
-        all_search_results = {}
-        all_urls = []
-        # search_queries = search_queries[1:]  # Skip first query (usually too broad)
-        
-        for i, query in enumerate(search_queries, 1):
-            self._log("SEARCH", f"[{i}/{len(search_queries)}] {query}")
+           
+            if labMode:
+                html = self._generate_html(user_prompt, {}, [], {})
+                # html = self._generate_html(user_prompt, {}, [], {})
+                yield {"type":"html","content":html}
+            else:
+                 
+                markdown = self._generate_markdown(user_prompt, {}, [], {})
+                yield {"type":"markdown","content":markdown}
+
+             
+        else:
+            # ========================================================================
+            # STAGE 2: Execute Web Searches
+            # ========================================================================
+            self._log("STAGE", f"=== STAGE 2: Executing {len(search_queries)} Searches ===")
             
-            results = self.searcher.search_google(query, num_results=10)
-            all_search_results[query] = results
+            all_search_results = {}
+            all_urls = []
+            # search_queries = search_queries[1:]  # Skip first query (usually too broad)
             
-            currentUrls = []
-            temp = []
-            # Collect URLs for scraping
-            for result in results:
-                if result['link'] not in all_urls:
-                    temp.append(result['link'])
-                    currentUrls.append(result['link'])
+            html = markdown = None
             
-            all_urls.extend(temp[0:5])
-            
-            content = {"transformed_query":query,"urls":currentUrls}
-            yield {"type":"sources","content":content}
-            
-            self._log("SEARCH", f"  Found {len(results)} results")
-            
-            # Small delay to avoid rate limits
-            if i < len(search_queries):
-                import time
-                time.sleep(0.3)
-        
-        yield {"type": "reasoning","content":f"found {len(all_urls)} sources..."}
-        
-        # ========================================================================
-        # STAGE 3: Scrape URLs (QUEUE-BASED OR STANDALONE MODE)
-        # ========================================================================
-        scraped_results = []
-        
-        if enable_scraping and all_urls:
-            self._log("STAGE", f"=== STAGE 3: Scraping Top {min(len(all_urls), self.max_urls_to_scrape)} URLs ===")
-            yield {"type": "reasoning","content":f"performing deep analysis... "}
+            for i, query in enumerate(search_queries, 1):
+                self._log("SEARCH", f"[{i}/{len(search_queries)}] {query}")
                 
-            urls_to_scrape = all_urls
+                results = self.searcher.search_google(query, num_results=10)
+                all_search_results[query] = results
+                
+                currentUrls = []
+                temp = []
+                # Collect URLs for scraping
+                for result in results:
+                    if result['link'] not in all_urls:
+                        temp.append(result['link'])
+                        currentUrls.append(result['link'])
+                
+                all_urls.extend(temp[0:5])
+                
+                content = {"transformed_query":query,"urls":currentUrls}
+                yield {"type":"sources","content":content}
+                
+                self._log("SEARCH", f"  Found {len(results)} results")
+                
+                # Small delay to avoid rate limits
+                if i < len(search_queries):
+                    import time
+                    time.sleep(0.3)
             
-            self._log("SCRAPER", f"Scraping {len(urls_to_scrape)} URLs...")
-            for url in urls_to_scrape:
-                self._log("SCRAPER", f"  - {url}")
+            yield {"type": "reasoning","content":f"found {len(all_urls)} sources..."}
             
-            primary_query = search_queries[0] if search_queries else user_prompt
+            # ========================================================================
+            # STAGE 3: Scrape URLs (QUEUE-BASED OR STANDALONE MODE)
+            # ========================================================================
+            scraped_results = []
             
-            # MODE 1: Queue-based (if callback is injected by tasks.py)
-            if self.scraper_callback:
-                print("[DEEP_SEARCH] Using queue-based scraper callback")
-                try:
-                    # Call the injected callback (LLM worker will send to scraper queue)
-                    scraped_results = self.scraper_callback(
-                        urls_to_scrape,
-                        primary_query,
-                        user_prompt  # original_query
-                    )
+            if enable_scraping and all_urls:
+                self._log("STAGE", f"=== STAGE 3: Scraping Top {min(len(all_urls), self.max_urls_to_scrape)} URLs ===")
+                yield {"type": "reasoning","content":f"performing deep analysis... "}
                     
-                    if scraped_results:
-                        successful_scrapes = [s for s in scraped_results if not s.get('error')] 
-                        print(f"[DEEP_SEARCH] Received {len(successful_scrapes)}/{len(scraped_results)} successful scrapes")
+                urls_to_scrape = all_urls
+                
+                self._log("SCRAPER", f"Scraping {len(urls_to_scrape)} URLs...")
+                for url in urls_to_scrape:
+                    self._log("SCRAPER", f"  - {url}")
+                
+                primary_query = search_queries[0] if search_queries else user_prompt
+                
+                # MODE 1: Queue-based (if callback is injected by tasks.py)
+                if self.scraper_callback:
+                    print("[DEEP_SEARCH] Using queue-based scraper callback")
+                    try:
+                        # Call the injected callback (LLM worker will send to scraper queue)
+                        scraped_results = self.scraper_callback(
+                            urls_to_scrape,
+                            primary_query,
+                            user_prompt  # original_query
+                        )
+                        
+                        if scraped_results:
+                            successful_scrapes = [s for s in scraped_results if not s.get('error')] 
+                            print(f"[DEEP_SEARCH] Received {len(successful_scrapes)}/{len(scraped_results)} successful scrapes")
+                            
+                            for scrape in successful_scrapes:
+                                self._log("SCRAPER", 
+                                    f"  {scrape['url'][:60]}... "
+                                    f"(score: {scrape['score']:.2f}, "
+                                    f"tables: {scrape['tables_count']}, "
+                                    f"words: {scrape['word_count']})")
+                        else:
+                            print("[DEEP_SEARCH] ⚠️ Scraper callback returned empty results")
+                            
+                    except Exception as e:
+                        print("=" * 80)
+                        print(f"[DEEP_SEARCH] ❌ Error calling scraper callback: {e}")
+                        print("=" * 80)
+                        import traceback
+                        traceback.print_exc()
+                        scraped_results = []
+                
+                # MODE 2: Standalone (direct scraper call)
+                else:
+                    print("[DEEP_SEARCH] Using standalone scraper (direct call)")
+                    try:
+                        scraped_results = self.scraper.scrape_urls(
+                            urls_to_scrape,
+                            primary_query,
+                            timeout=self.scrape_timeout,
+                            chunk_size=self.scrape_chunk_size,
+                            concurrency=self.scrape_concurrency
+                        )
+                        
+                        successful_scrapes = [s for s in scraped_results if not s.get('error')]
+                        self._log("SCRAPER", f"Successfully scraped {len(successful_scrapes)}/{len(scraped_results)} URLs")
                         
                         for scrape in successful_scrapes:
                             self._log("SCRAPER", 
@@ -912,107 +940,85 @@ class EnhancedHTMLAppGenerator:
                                 f"(score: {scrape['score']:.2f}, "
                                 f"tables: {scrape['tables_count']}, "
                                 f"words: {scrape['word_count']})")
-                    else:
-                        print("[DEEP_SEARCH] ⚠️ Scraper callback returned empty results")
-                        
-                except Exception as e:
-                    print("=" * 80)
-                    print(f"[DEEP_SEARCH] ❌ Error calling scraper callback: {e}")
-                    print("=" * 80)
-                    import traceback
-                    traceback.print_exc()
-                    scraped_results = []
-            
-            # MODE 2: Standalone (direct scraper call)
+                                
+                    except Exception as e:
+                        print(f"[DEEP_SEARCH] ❌ Error in standalone scraper: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        scraped_results = []
             else:
-                print("[DEEP_SEARCH] Using standalone scraper (direct call)")
-                try:
-                    scraped_results = self.scraper.scrape_urls(
-                        urls_to_scrape,
-                        primary_query,
-                        timeout=self.scrape_timeout,
-                        chunk_size=self.scrape_chunk_size,
-                        concurrency=self.scrape_concurrency
-                    )
-                    
-                    successful_scrapes = [s for s in scraped_results if not s.get('error')]
-                    self._log("SCRAPER", f"Successfully scraped {len(successful_scrapes)}/{len(scraped_results)} URLs")
-                    
-                    for scrape in successful_scrapes:
-                        self._log("SCRAPER", 
-                            f"  {scrape['url'][:60]}... "
-                            f"(score: {scrape['score']:.2f}, "
-                            f"tables: {scrape['tables_count']}, "
-                            f"words: {scrape['word_count']})")
-                            
-                except Exception as e:
-                    print(f"[DEEP_SEARCH] ❌ Error in standalone scraper: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    scraped_results = []
-        else:
-            self._log("STAGE", "=== STAGE 3: Skipping Web Scraping ===")
-        
-        # ========================================================================
-        # STAGE 4: Extract Structured Data
-        # ========================================================================
-        stage_num = 4 if enable_scraping else 3
-        self._log("STAGE", f"=== STAGE {stage_num}: Extracting Structured Data ===")
-        
-        try:
-            yield {"type": "reasoning","content":f"developing assets..."}
-            structured_data = self.extractor.extract_structured_data(
-                all_search_results,
-                scraped_results,
-                data_types,
-                user_prompt
-            )
-        except Exception as e:
-            self._log("ERROR", f"Data extraction failed: {e}")
-            self._log("WARNING", "Continuing without structured data")
-            structured_data = {}
-        
-        # ========================================================================
-        # STAGE 5: Generate HTML
-        # ========================================================================
-        stage_num += 1
-        self._log("STAGE", f"=== STAGE {stage_num}: Generating HTML ===")
-        
-        # from iterative_html_generator import develop_html
-        # html = develop_html(user_prompt,
-        #     all_search_results,
-        #     scraped_results,
-        #     structured_data)
-        
-        html = self._generate_html(
-            user_prompt,
-            all_search_results,
-            scraped_results,
-            structured_data
-        )
-        
-        self._log("COMPLETE", f"Generated {len(html)} characters")
-        yield {"type":"html","content":html}
-        
-        # ========================================================================
-        # STAGE 6: Generate Research Analysis Summary
-        # ========================================================================
-        self._log("STAGE", "=== Generating Research Analysis Summary ===")
-        yield {"type": "reasoning", "content": "Analyzing research thought process..."}
-        
-        try:
-            analytical_summary = self._generate_research_summary(
-                user_prompt,
-                all_search_results,
-                scraped_results,
-                structured_data,
-                html
-            )
+                self._log("STAGE", "=== STAGE 3: Skipping Web Scraping ===")
             
-            yield {"type": "analysis_summary", "content": analytical_summary}
-        except Exception as e:
-            self._log("ERROR", f"Failed to generate analytical summary: {e}")
-            yield {"type": "analysis_summary", "content": f"Unable to generate summary: {e}"}
+            # ========================================================================
+            # STAGE 4: Extract Structured Data
+            # ========================================================================
+            stage_num = 4 if enable_scraping else 3
+            self._log("STAGE", f"=== STAGE {stage_num}: Extracting Structured Data ===")
+            
+            try:
+                yield {"type": "reasoning","content":f"developing assets..."}
+                structured_data = self.extractor.extract_structured_data(
+                    all_search_results,
+                    scraped_results,
+                    data_types,
+                    user_prompt
+                )
+            except Exception as e:
+                self._log("ERROR", f"Data extraction failed: {e}")
+                self._log("WARNING", "Continuing without structured data")
+                structured_data = {}
+            
+            # ========================================================================
+            # STAGE 5: Generate HTML
+            # ========================================================================
+            stage_num += 1
+            
+            
+            # from iterative_html_generator import develop_html
+            # html = develop_html(user_prompt,
+            #     all_search_results,
+            #     scraped_results,
+            #     structured_data)
+            
+            if labMode:
+                self._log("STAGE", f"=== STAGE {stage_num}: Generating HTML ===")
+                html = self._generate_html(
+                    user_prompt,
+                    all_search_results,
+                    scraped_results,
+                    structured_data
+                )
+                
+                self._log("COMPLETE", f"Generated {len(html)} characters")
+                yield {"type":"html","content":html}
+            else:
+                self._log("STAGE", f"=== STAGE {stage_num}: Generating MARDDOWN ===")
+                markdown = self._generate_markdown(user_prompt,all_search_results,scraped_results,structured_data)
+                self._log("COMPLETE", f"Generated {len(markdown)} markdown characters")
+                yield {"type":"markdown","content":markdown}
+                
+            # ========================================================================
+            # STAGE 6: Generate Research Analysis Summary
+            # ========================================================================
+            self._log("STAGE", "=== Generating Research Analysis Summary ===")
+            yield {"type": "reasoning", "content": "Analyzing research thought process..."}
+            
+            try:
+                
+                content =  html if labMode else  markdown
+                
+                analytical_summary = self._generate_research_summary(
+                    user_prompt,
+                    all_search_results,
+                    scraped_results,
+                    structured_data,
+                    content
+                )
+                
+                yield {"type": "analysis_summary", "content": analytical_summary}
+            except Exception as e:
+                self._log("ERROR", f"Failed to generate analytical summary: {e}")
+                yield {"type": "analysis_summary", "content": f"Unable to generate summary: {e}"}
             
     def _develop_simple(self, user_prompt: str) -> str:
         """Simple single-stage generation (original behavior)"""
@@ -1041,618 +1047,6 @@ class EnhancedHTMLAppGenerator:
             structured_data
         )
     
-#     def _generate_html(
-#         self,
-#         user_query: str,
-#         search_results: Dict[str, List[Dict]],
-#         scraped_results: List[Dict],
-#         structured_data: Dict
-#     ) -> str:
-#         """
-#         Generate HTML with comprehensive context including scraped data
-#         """
-        
-#         is_update = self.current_html is not None
-        
-#         # Build search context string
-#         search_context = ""
-#         if search_results:
-#             search_context = "\n\n=== WEB SEARCH RESULTS ===\n"
-#             for query, results in search_results.items():
-#                 search_context += f"\nQuery: {query}\n"
-#                 for i, result in enumerate(results, 1):
-#                     search_context += f"\n{i}. {result['title']}\n"
-#                     search_context += f"   URL: {result['link']}\n"
-#                     search_context += f"   Snippet: {result['snippet']}\n"
-        
-#         # Build scraped content context
-#         scraped_context = ""
-#         if scraped_results:
-#             scraped_context = "\n\n=== SCRAPED WEB CONTENT (FULL DEPTH) ===\n"
-#             scraped_context += "This is the complete content extracted from web pages.\n"
-            
-#             successful_scrapes = [s for s in scraped_results if not s.get('error')]
-            
-#             for i, scrape in enumerate(successful_scrapes, 1):
-#                 scraped_context += f"\n--- Source {i}: {scrape['url']} ---\n"
-#                 scraped_context += f"Relevance Score: {scrape['score']:.2f}\n"
-#                 scraped_context += f"Word Count: {scrape['word_count']}\n"
-                
-#                 # Add best chunk
-#                 if scrape.get('best_chunk'):
-#                     scraped_context += f"\nMost Relevant Content:\n"
-#                     scraped_context += "```\n"
-#                     scraped_context += scrape['best_chunk'][:3000]  # Include more context
-#                     if len(scrape['best_chunk']) > 3000:
-#                         scraped_context += "\n... (truncated)"
-#                     scraped_context += "\n```\n"
-                
-#                 # Add tables
-#                 if scrape.get('tables') and scrape['tables_count'] > 0:
-#                     scraped_context += f"\nExtracted Tables ({scrape['tables_count']} total):\n"
-#                     for j, table in enumerate(scrape['tables'], 1):
-#                         scraped_context += f"\nTable {j}:\n"
-#                         scraped_context += "```json\n"
-#                         scraped_context += json.dumps(table, indent=2)[:2000]
-#                         if len(json.dumps(table)) > 2000:
-#                             scraped_context += "\n... (truncated)"
-#                         scraped_context += "\n```\n"
-        
-#         # Build structured data context
-#         structured_context = ""
-#         if structured_data:
-#             structured_context = "\n\n=== EXTRACTED STRUCTURED DATA ===\n"
-#             structured_context += json.dumps(structured_data, indent=2)
-#             structured_context += "\n\nThis is pre-extracted, structured data. Use these exact values in your app."
-        
-#         # Get system prompt
-#         system_prompt = self._get_system_prompt(is_update)
-        
-#         # Build user prompt
-#         if is_update:
-#             user_prompt = f"""Update the following HTML application based on this request:
-
-# USER REQUEST: {user_query}
-
-# CURRENT HTML APPLICATION:
-# {self.current_html}
-# {search_context}
-# {scraped_context}
-# {structured_context}
-
-# CRITICAL INSTRUCTIONS FOR DATA USAGE:
-# 1. The SCRAPED WEB CONTENT contains full-depth article content and extracted tables
-# 2. The EXTRACTED STRUCTURED DATA contains ready-to-use values parsed from all sources
-# 3. Use the scraped tables directly - they contain structured data ready for visualization
-# 4. The best_chunk field contains the most relevant text content from each page
-# 5. Create a rich, data-driven application with real values, not templates
-# 6. Include source citations with clickable URLs
-# 7. If tables are present, create interactive visualizations (charts, sortable tables, etc.)
-# 8. **CRITICAL: Include text summaries and commentary from the scraped content**
-# 9. **DO NOT just show tables/charts - include the actual article text and insights**
-# 10. **Create narrative sections that explain the data using the scraped text**
-
-# CONTENT REQUIREMENTS:
-# - Include a summary section with key insights from the scraped articles
-# - Add commentary and analysis text from the sources
-# - Create narrative descriptions alongside visualizations
-# - Use the hundreds of words from best_chunk - don't waste them!
-# - Include quotes or key points from the scraped content
-# - Add context sections that explain what the data means
-
-# EXAMPLE STRUCTURE:
-# - Executive Summary (from scraped content)
-# - Key Insights (from article text)
-# - Data Visualizations (from tables)
-# - Detailed Analysis (from best_chunk content)
-# - Source References (with links)
-
-# Generate the COMPLETE updated HTML application (output ONLY the HTML):"""
-#         else:
-#             user_prompt = f"""Create a self-contained HTML application based on this request:
-
-# USER REQUEST: {user_query}
-# {search_context}
-# {scraped_context}
-# {structured_context}
-
-# CRITICAL INSTRUCTIONS FOR DATA USAGE:
-# 1. The SCRAPED WEB CONTENT provides full-depth article text and extracted tables
-# 2. The EXTRACTED STRUCTURED DATA contains ready-to-use values from all sources
-# 3. Tables from scraping are pre-structured - use them directly in your app
-# 4. The best_chunk field contains the most relevant excerpts from each source
-# 5. Create comprehensive, data-rich visualizations using the provided data
-# 6. Include interactive features to explore the scraped content
-# 7. Add source attribution with clickable links to original URLs
-# 8. If tables are present, create charts, graphs, or interactive tables
-# 9. Use actual data values, not placeholder or dummy data
-# 10. **CRITICAL: Include text summaries, commentary, and analysis from scraped content**
-# 11. **DO NOT just show tables/charts - include the article text and insights**
-# 12. **Create narrative sections that explain and contextualize the data**
-# 13. 100% OF DATA SENT MUST BE INCLUDED IN THE HTML APP
-
-# CONTENT REQUIREMENTS:
-# - Include a summary/overview section with key insights from the scraped articles
-# - Add commentary, analysis, and explanatory text from the sources
-# - Create narrative descriptions alongside all visualizations
-# - All SVG and Tables data must be preserved
-# - Use the hundreds of words from best_chunk content - this is valuable information!
-# - Include relevant quotes, key points, or highlights from scraped articles
-# - Add context sections that explain trends, patterns, or what the data means
-# - Make the app informative and educational, not just visual
-
-# EXAMPLE STRUCTURE:
-# 1. Executive Summary (synthesized from scraped article content)
-# 2. Key Findings & Insights (from article text and analysis)
-# 3. Interactive Visualizations (from tables + explanatory text)
-# 4. Detailed Analysis (from best_chunk content with commentary)
-# 5. Additional Context (trends, patterns, explanations from articles)
-# 6. Sources & References (with clickable links)
-
-# The scraped content contains hundreds of words of valuable information - USE IT ALL!
-# Don't just extract numbers for charts - include the surrounding analysis and commentary.
-
-# Generate the COMPLETE HTML application (output ONLY the HTML):"""
-        
-#         # Add to conversation history
-#         if not self.conversation_history:
-#             self.conversation_history.append({
-#                 "role": "system",
-#                 "content": system_prompt
-#             })
-        
-#         self.conversation_history.append({
-#             "role": "user",
-#             "content": user_prompt
-#         })
-        
-#         # Generate with GPT-4o
-#         start_time = datetime.now()
-        
-#         response = await client.chat.completions.create(
-#             model="gpt-4o",
-#             messages=self.conversation_history,
-#             max_tokens=4000,
-#             temperature=0.7
-#         )
-        
-#         duration = (datetime.now() - start_time).total_seconds()
-        
-#         if self.verbose:
-#             self._log("API", f"Response in {duration:.2f}s")
-#             if hasattr(response, 'usage'):
-#                 self._log("TOKENS", 
-#                     f"Prompt: {response.usage.prompt_tokens}, "
-#                     f"Completion: {response.usage.completion_tokens}")
-        
-#         html_content = response.choices[0].message.content.strip()
-        
-#         # Clean up
-#         if html_content.startswith("```html"):
-#             html_content = html_content[7:]
-#         elif html_content.startswith("```"):
-#             html_content = html_content[3:]
-#         if html_content.endswith("```"):
-#             html_content = html_content[:-3]
-#         html_content = html_content.strip()
-        
-#         # Validate
-#         if not html_content.lower().startswith("<!doctype") and not html_content.lower().startswith("<html"):
-#             self._log("WARNING", "Generated content doesn't look like HTML")
-#             html_content = f"""<!DOCTYPE html>
-# <html lang="en">
-# <head>
-#     <meta charset="UTF-8">
-#     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-#     <title>Generated App</title>
-# </head>
-# <body>
-# {html_content}
-# </body>
-# </html>"""
-        
-#         # Store state
-#         self.current_html = html_content
-        
-#         # Add summary to conversation
-#         summary = f"Generated HTML app with requested features."
-#         if search_results:
-#             total_results = sum(len(r) for r in search_results.values())
-#             summary += f" Used {len(search_results)} search queries with {total_results} results."
-#         if scraped_results:
-#             successful = len([s for s in scraped_results if not s.get('error')])
-#             total_tables = sum(s.get('tables_count', 0) for s in scraped_results)
-#             summary += f" Scraped {successful} pages with {total_tables} tables extracted."
-#         if structured_data:
-#             summary += f" Extracted structured data with {len(structured_data)} data categories."
-        
-#         self.conversation_history.append({
-#             "role": "assistant",
-#             "content": summary
-#         })
-        
-#         return html_content
-#     def _generate_html_extended_output(
-#         self,
-#         user_query: str,
-#         search_results: Dict[str, List[Dict]],
-#         scraped_results: List[Dict],
-#         structured_data: Dict
-#     ) -> str:
-#         """
-#         Generate HTML with comprehensive context including scraped data.
-#         ENFORCES: SVG-only visualizations, NO client-side JS for charts.
-#         ENFORCES: 100% data utilization - every table, every insight must be included.
-#         """
-        
-#         is_update = self.current_html is not None
-        
-#         # Build search context string
-#         search_context = ""
-#         if search_results:
-#             search_context = "\n\n=== WEB SEARCH RESULTS ===\n"
-#             for query, results in search_results.items():
-#                 search_context += f"\nQuery: {query}\n"
-#                 for i, result in enumerate(results, 1):
-#                     search_context += f"\n{i}. {result['title']}\n"
-#                     search_context += f"   URL: {result['link']}\n"
-#                     search_context += f"   Snippet: {result['snippet']}\n"
-        
-#         # Build scraped content context
-#         scraped_context = ""
-#         if scraped_results:
-#             scraped_context = "\n\n=== SCRAPED WEB CONTENT (FULL DEPTH) ===\n"
-#             scraped_context += "This is the complete content extracted from web pages.\n"
-            
-#             successful_scrapes = [s for s in scraped_results if not s.get('error')]
-            
-#             for i, scrape in enumerate(successful_scrapes, 1):
-#                 scraped_context += f"\n--- Source {i}: {scrape['url']} ---\n"
-#                 scraped_context += f"Relevance Score: {scrape['score']:.2f}\n"
-#                 scraped_context += f"Word Count: {scrape['word_count']}\n"
-                
-#                 # Add best chunk
-#                 if scrape.get('best_chunk'):
-#                     scraped_context += f"\nMost Relevant Content:\n"
-#                     scraped_context += "```\n"
-#                     scraped_context += scrape['best_chunk'][:3000]
-#                     if len(scrape['best_chunk']) > 3000:
-#                         scraped_context += "\n... (truncated)"
-#                     scraped_context += "\n```\n"
-                
-#                 # Add tables
-#                 if scrape.get('tables') and scrape['tables_count'] > 0:
-#                     scraped_context += f"\nExtracted Tables ({scrape['tables_count']} total):\n"
-#                     for j, table in enumerate(scrape['tables'], 1):
-#                         scraped_context += f"\nTable {j}:\n"
-#                         scraped_context += "```json\n"
-#                         scraped_context += json.dumps(table, indent=2)[:2000]
-#                         if len(json.dumps(table)) > 2000:
-#                             scraped_context += "\n... (truncated)"
-#                         scraped_context += "\n```\n"
-        
-#         # Build structured data context
-#         structured_context = ""
-#         if structured_data:
-#             structured_context = "\n\n=== EXTRACTED STRUCTURED DATA ===\n"
-#             structured_context += json.dumps(structured_data, indent=2)
-#             structured_context += "\n\nThis is pre-extracted, structured data. Use these exact values in your app."
-        
-#         # Get system prompt
-#         system_prompt = self._get_system_prompt_svg_only(is_update)
-        
-#         # Build user prompt
-#         if is_update:
-#             user_prompt = f"""Update the following HTML application based on this request:
-
-# USER REQUEST: {user_query}
-
-# CURRENT HTML APPLICATION:
-# {self.current_html}
-# {search_context}
-# {scraped_context}
-# {structured_context}
-
-# 🚨 CRITICAL REQUIREMENTS 🚨
-
-# **1. SVG-ONLY VISUALIZATION RULE:**
-# - ❌ FORBIDDEN: Chart.js, D3.js, Plotly, Canvas, or ANY JavaScript charting library
-# - ✅ REQUIRED: Create ALL charts as embedded SVG elements directly in HTML
-# - Every data point must be manually plotted in SVG
-# - Example: For 18 temperature readings, create 18 SVG circles/bars/lines
-# - SVG must be production-ready and fully rendered (no placeholders)
-
-# **2. 100% DATA UTILIZATION RULE:**
-# - You have received {len(successful_scrapes)} scraped pages with {sum(s.get('tables_count', 0) for s in scraped_results)} tables total
-# - EVERY SINGLE TABLE must be converted to BOTH:
-#   a) An HTML table with ALL rows
-#   b) An SVG chart visualizing the same data
-# - EVERY paragraph from best_chunk must be included as explanatory text
-# - NO DATA CAN BE OMITTED - if you received 73 tables, output must have 73 tables + 73 SVG charts
-
-# **3. EXHAUSTIVE CONTENT REQUIREMENTS:**
-# - Include ALL text from best_chunk fields (hundreds/thousands of words)
-# - Create narrative sections explaining every dataset
-# - Add analysis and commentary for every visualization
-# - Include source attribution for every piece of data
-# - Create executive summaries synthesizing all information
-
-# **4. NO SHORTCUTS ALLOWED:**
-# - ❌ NO "... (more data)" or "Additional rows omitted"
-# - ❌ NO truncation of tables or charts
-# - ❌ NO placeholder data when real data exists
-# - ❌ NO comments like "<!-- data continues -->"
-# - ✅ EVERY row of EVERY table must be present
-# - ✅ EVERY data point must be visualized in SVG
-
-# **DATA INVENTORY:**
-# {f"- Search Results: {sum(len(r) for r in search_results.values())} results" if search_results else ""}
-# {f"- Scraped Pages: {len([s for s in scraped_results if not s.get('error')])} pages" if scraped_results else ""}
-# {f"- Total Tables: {sum(s.get('tables_count', 0) for s in scraped_results)} tables" if scraped_results else ""}
-# {f"- Total Words: {sum(s.get('word_count', 0) for s in scraped_results)} words" if scraped_results else ""}
-# {f"- Structured Data Keys: {list(structured_data.keys())}" if structured_data else ""}
-
-# **YOUR TASK:** Use 100% of this data. Create a comprehensive HTML application where:
-# 1. Every table → HTML table + SVG chart
-# 2. Every text insight → Explanatory section
-# 3. Every data point → Visualized and explained
-# 4. Zero data loss
-
-# Generate the COMPLETE updated HTML application (output ONLY the HTML):"""
-#         else:
-#             # Count data for accountability
-#             num_scraped = len([s for s in scraped_results if not s.get('error')])
-#             num_tables = sum(s.get('tables_count', 0) for s in scraped_results)
-#             num_words = sum(s.get('word_count', 0) for s in scraped_results)
-            
-#             user_prompt = f"""Create a self-contained HTML application based on this request:
-
-# USER REQUEST: {user_query}
-# {search_context}
-# {scraped_context}
-# {structured_context}
-
-# 🚨 CRITICAL REQUIREMENTS 🚨
-
-# **1. SVG-ONLY VISUALIZATION RULE:**
-# - ❌ ABSOLUTELY FORBIDDEN: Chart.js, D3.js, Plotly.js, Highcharts, or ANY JavaScript charting library
-# - ❌ ABSOLUTELY FORBIDDEN: <canvas> elements for charts
-# - ❌ ABSOLUTELY FORBIDDEN: External chart rendering of any kind
-# - ✅ MANDATORY: Create ALL charts as embedded <svg> elements directly in HTML
-# - ✅ MANDATORY: Manually plot every single data point in SVG coordinates
-# - ✅ MANDATORY: Complete, production-ready SVG with no placeholders
-
-# **SVG CREATION REQUIREMENTS:**
-# - For line charts: Use <polyline> or <path> with ALL data points
-# - For bar charts: Use <rect> for EACH bar, no shortcuts
-# - For scatter plots: Use <circle> for EACH point
-# - Include axes: <line> elements for x-axis and y-axis
-# - Include labels: <text> elements for ALL labels and values
-# - Include title: <text> element centered at top
-# - Use proper viewBox for responsiveness
-# - Example: If you have 24 hourly temperatures, create 24 data points in SVG
-
-# **2. 100% DATA UTILIZATION RULE:**
-
-# YOU HAVE RECEIVED:
-# {f"📊 {num_tables} tables from {num_scraped} web pages" if scraped_results else "No scraped data"}
-# {f"📝 {num_words} words of content" if scraped_results else ""}
-# {f"🔍 {sum(len(r) for r in search_results.values())} search results" if search_results else ""}
-# {f"📋 Structured data with keys: {list(structured_data.keys())}" if structured_data else ""}
-
-# **MANDATORY DATA USAGE:**
-# ✅ EVERY TABLE must appear as:
-#    1. Complete HTML <table> with ALL rows (no truncation)
-#    2. SVG visualization showing the same data
-#    3. Analysis paragraph explaining the data
-
-# ✅ EVERY paragraph from best_chunk must be included as text content
-
-# ✅ EVERY search result must be referenced or linked
-
-# ✅ ALL structured data must be displayed/visualized
-
-# **3. EXHAUSTIVE CONTENT STRUCTURE:**
-
-# Your HTML MUST include:
-
-# **A. Executive Summary Section:**
-# - Synthesize insights from ALL scraped content
-# - 3-5 paragraphs covering key findings
-# - Pull from best_chunk text
-
-# **B. Key Findings Section:**
-# - Bullet list with 5-10 major insights
-# - Each insight backed by data
-# - Include numbers/statistics
-
-# **C. Data Visualization Section:**
-# FOR EACH TABLE you received:
-# - Heading: "Dataset X: [descriptive name]"
-# - HTML table with ALL rows and columns
-# - SVG chart visualizing the data (appropriate chart type)
-# - Analysis paragraph explaining patterns/trends
-
-# **D. Detailed Analysis Section:**
-# - Use ALL remaining text from best_chunk
-# - Create subsections for different topics
-# - Include quotes or key excerpts
-# - Add commentary and interpretation
-
-# **E. Additional Context Section:**
-# - Trends, patterns, implications
-# - Comparisons across datasets
-# - Future outlook or predictions
-
-# **F. Sources & References Section:**
-# - Clickable links to ALL source URLs
-# - Brief description of each source
-
-# **4. SVG CHART EXAMPLES:**
-
-# **Temperature Line Chart (18 hours of data):**
-# ```html
-# <svg viewBox="0 0 800 400" xmlns="http://www.w3.org/2000/svg">
-#   <text x="400" y="30" text-anchor="middle" font-size="18" font-weight="bold">Temperature Over Time</text>
-#   <line x1="50" y1="350" x2="750" y2="350" stroke="black" stroke-width="2"/>
-#   <line x1="50" y1="50" x2="50" y2="350" stroke="black" stroke-width="2"/>
-#   <polyline points="50,290 90,285 130,280 170,275 210,270 250,265 290,260 330,255 370,260 410,265 450,270 490,275 530,280 570,285 610,290 650,295 690,300 730,305" 
-#             fill="none" stroke="#FF5722" stroke-width="3"/>
-#   <circle cx="50" cy="290" r="4" fill="#FF5722"/>
-#   <circle cx="90" cy="285" r="4" fill="#FF5722"/>
-#   <!-- ... create circle for ALL 18 points -->
-#   <text x="50" y="370" text-anchor="middle" font-size="10">6am</text>
-#   <text x="90" y="370" text-anchor="middle" font-size="10">7am</text>
-#   <!-- ... create label for ALL 18 hours -->
-#   <text x="40" y="295" text-anchor="end" font-size="11">12°C</text>
-#   <text x="40" y="265" text-anchor="end" font-size="11">15°C</text>
-# </svg>
-# ```
-
-# **Bar Chart (10 categories):**
-# ```html
-# <svg viewBox="0 0 600 400" xmlns="http://www.w3.org/2000/svg">
-#   <text x="300" y="30" text-anchor="middle" font-size="18" font-weight="bold">Sales by Category</text>
-#   <line x1="50" y1="350" x2="550" y2="350" stroke="black" stroke-width="2"/>
-#   <line x1="50" y1="50" x2="50" y2="350" stroke="black" stroke-width="2"/>
-#   <rect x="60" y="200" width="40" height="150" fill="#2196F3"/>
-#   <rect x="110" y="180" width="40" height="170" fill="#2196F3"/>
-#   <rect x="160" y="160" width="40" height="190" fill="#2196F3"/>
-#   <!-- ... create rect for ALL 10 categories -->
-#   <text x="80" y="370" text-anchor="middle" font-size="10">Cat 1</text>
-#   <text x="130" y="370" text-anchor="middle" font-size="10">Cat 2</text>
-#   <!-- ... create label for ALL 10 categories -->
-# </svg>
-# ```
-
-# **5. NO SHORTCUTS CHECKLIST:**
-
-# Before submitting, verify:
-# □ Zero Chart.js / D3.js / Canvas usage
-# □ All charts are pure SVG elements
-# □ Every table has corresponding SVG chart
-# □ All table rows included (no "..." or truncation)
-# □ All best_chunk text used as content
-# □ Executive summary synthesizes all data
-# □ Analysis sections explain every dataset
-# □ Sources section lists all URLs
-# □ No placeholder data when real data exists
-# □ HTML is self-contained (CSS in <style>)
-
-# **6. STYLING REQUIREMENTS:**
-
-# Use modern CSS (in <style> tag):
-# - Gradient backgrounds
-# - Card-based layouts with shadows
-# - Professional color scheme
-# - Responsive design (mobile-friendly)
-# - Smooth transitions and hover effects
-# - Beautiful typography
-# - Proper spacing and whitespace
-
-# **7. CONTENT-TO-VISUALIZATION RATIO:**
-
-# Aim for 60% explanatory text, 40% visualizations:
-# - Don't just show charts - explain what they mean
-# - Don't just list data - interpret and analyze
-# - Add narrative flow between sections
-# - Make it educational and informative
-
-# **8. QUALITY STANDARDS:**
-
-# This is PRODUCTION-GRADE output:
-# - No bugs, no broken SVG
-# - Professional appearance
-# - Accessible (proper semantic HTML)
-# - Well-organized and easy to navigate
-# - Comprehensive and exhaustive
-
-# Generate the COMPLETE HTML application using 100% of the provided data.
-# Output ONLY the HTML (no explanations, no markdown code blocks)."""
-        
-#         # Add to conversation history
-#         if not self.conversation_history:
-#             self.conversation_history.append({
-#                 "role": "system",
-#                 "content": system_prompt
-#             })
-        
-#         self.conversation_history.append({
-#             "role": "user",
-#             "content": user_prompt
-#         })
-        
-#         # Generate with GPT-4o
-#         start_time = datetime.now()
-        
-#         response = await client.chat.completions.create(
-#             model="gpt-4o",
-#             messages=self.conversation_history,
-#             max_tokens=16000,  # Increased for exhaustive content
-#             temperature=0.7
-#         )
-        
-#         duration = (datetime.now() - start_time).total_seconds()
-        
-#         if self.verbose:
-#             self._log("API", f"Response in {duration:.2f}s")
-#             if hasattr(response, 'usage'):
-#                 self._log("TOKENS", 
-#                     f"Prompt: {response.usage.prompt_tokens}, "
-#                     f"Completion: {response.usage.completion_tokens}")
-        
-#         html_content = response.choices[0].message.content.strip()
-        
-#         # Clean up
-#         if html_content.startswith("```html"):
-#             html_content = html_content[7:]
-#         elif html_content.startswith("```"):
-#             html_content = html_content[3:]
-#         if html_content.endswith("```"):
-#             html_content = html_content[:-3]
-#         html_content = html_content.strip()
-        
-#         # Validate
-#         if not html_content.lower().startswith("<!doctype") and not html_content.lower().startswith("<html"):
-#             self._log("WARNING", "Generated content doesn't look like HTML")
-#             html_content = f"""<!DOCTYPE html>
-# <html lang="en">
-# <head>
-#     <meta charset="UTF-8">
-#     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-#     <title>Generated App</title>
-# </head>
-# <body>
-# {html_content}
-# </body>
-# </html>"""
-        
-#         # Validate no Chart.js usage
-#         if any(lib in html_content.lower() for lib in ['chart.js', 'chartjs', 'd3.js', 'plotly']):
-#             self._log("WARNING", "Detected JavaScript charting library - this violates SVG-only requirement")
-        
-#         # Store state
-#         self.current_html = html_content
-        
-#         # Add summary to conversation
-#         summary = f"Generated comprehensive HTML app with SVG visualizations."
-#         if search_results:
-#             total_results = sum(len(r) for r in search_results.values())
-#             summary += f" Used {len(search_results)} search queries with {total_results} results."
-#         if scraped_results:
-#             successful = len([s for s in scraped_results if not s.get('error')])
-#             total_tables = sum(s.get('tables_count', 0) for s in scraped_results)
-#             summary += f" Scraped {successful} pages with {total_tables} tables - all converted to HTML tables + SVG charts."
-#         if structured_data:
-#             summary += f" Utilized structured data with {len(structured_data)} categories."
-        
-#         self.conversation_history.append({
-#             "role": "assistant",
-#             "content": summary
-#         })
-        
-#         return html_content
-
     def _generate_html(
         self,
         user_query: str,
@@ -1852,12 +1246,10 @@ Generate the complete HTML now. Start with: <!DOCTYPE html>"""
         import anthropic
         client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         
-        system_message = None
+        
         filtered_messages = []
         for msg in self.conversation_history:
-            if msg.get("role") == "system":
-                system_message = msg.get("content")
-            else:
+            if msg.get("role") == "user":
                 filtered_messages.append(msg)
             
         message = client.messages.create(
@@ -1974,6 +1366,238 @@ You produce high-quality HTML that uses the provided data effectively."""
         else:
             return base_rules + "\n\nYou will create a new HTML application."
     
+    def _get_system_prompt_strategic_markdown(self) -> str:
+        """Get strategic system prompt for Markdown generation with Mermaid diagrams"""
+        
+        base_rules = """You are an expert technical writer and data analyst who creates comprehensive, well-structured Markdown documents with visual data representations.
+
+    CORE PRINCIPLES:
+    - You create professional, clear, and insightful Markdown documents
+    - You use Mermaid diagrams for visual data representation
+    - You present data through tables, charts, and narrative analysis
+    - You organize content with proper hierarchy and structure
+    - You write in a clear, professional, and engaging style
+    - You maintain conversational context across multiple interactions
+
+    TECHNICAL STANDARDS:
+    - Pure Markdown: Use standard Markdown syntax throughout
+    - Proper formatting: Headers (# ## ###), lists, tables, blockquotes, code blocks
+    - Tables: Format all tabular data as Markdown tables with proper alignment
+    - Mermaid diagrams: Use for all visual data representation
+    - Structure: Clear hierarchy with appropriate heading levels
+    - Readability: Proper spacing, logical flow, scannable content
+    - Links: Use [text](url) format for all references
+
+    MARKDOWN FORMATTING GUIDELINES:
+    - Headers: Use # for title, ## for main sections, ### for subsections, #### for sub-subsections
+    - Tables: Use pipe-separated format with alignment markers (| Column | Column |)
+    - Lists: Use - or * for bullets, 1. 2. 3. for numbered lists
+    - Emphasis: Use **bold** for key terms and findings, *italic* for emphasis
+    - Code: Use `inline code` for technical terms, ```language blocks``` for code snippets
+    - Links: Use [Link Text](https://url.com) format for all references
+    - Blockquotes: Use > for callouts, important notes, and key insights
+    - Horizontal rules: Use --- to separate major sections
+
+    MERMAID DIAGRAM GUIDELINES:
+    You MUST create Mermaid diagrams for visualizing data. Use these chart types:
+
+    1. PIE CHARTS (for proportions and percentages):
+    ````mermaid
+    pie title "Title Here"
+        "Category 1" : 45.0
+        "Category 2" : 30.0
+        "Category 3" : 25.0
+    ````
+
+    2. BAR CHARTS (for comparisons):
+    ````mermaid
+    %%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#4CAF50'}}}%%
+    graph TB
+        A["Category 1<br/>Value: 100"]
+        B["Category 2<br/>Value: 150"]
+        C["Category 3<br/>Value: 200"]
+        style A fill:#4CAF50
+        style B fill:#2196F3
+        style C fill:#FF9800
+    ````
+
+    3. LINE/TREND CHARTS (for time series):
+    ````mermaid
+    graph LR
+        A[Jan: 100] --> B[Feb: 120]
+        B --> C[Mar: 150]
+        C --> D[Apr: 140]
+        D --> E[May: 180]
+    ````
+
+    4. FLOWCHARTS (for processes):
+    ````mermaid
+    graph TD
+        A[Start] --> B{Decision}
+        B -->|Yes| C[Action 1]
+        B -->|No| D[Action 2]
+        C --> E[End]
+        D --> E
+    ````
+
+    5. GANTT CHARTS (for timelines):
+    ````mermaid
+    gantt
+        title Project Timeline
+        dateFormat  YYYY-MM-DD
+        section Phase 1
+        Task 1           :2024-01-01, 30d
+        Task 2           :2024-01-15, 20d
+        section Phase 2
+        Task 3           :2024-02-01, 25d
+    ````
+
+    6. HORIZONTAL BAR CHARTS (for rankings):
+    ````mermaid
+    %%{init: {'theme':'base'}}%%
+    graph LR
+        A["Item 1: ████████████ 80%"]
+        B["Item 2: ██████████ 65%"]
+        C["Item 3: ██████ 45%"]
+    ````
+
+    WHEN TO USE EACH CHART TYPE:
+    - Pie: Market share, budget allocation, percentage breakdowns
+    - Bar: Sales comparisons, category rankings, performance metrics
+    - Line: Trends over time, growth patterns, temporal data
+    - Flowchart: Processes, decision trees, workflows
+    - Gantt: Project timelines, schedules, milestones
+
+    MERMAID BEST PRACTICES:
+    - Always include a title in the diagram
+    - Use meaningful labels with actual data values
+    - Choose colors that enhance readability
+    - Keep diagrams simple and focused
+    - Place diagram immediately after introducing the data in text
+    - Follow each diagram with analysis text explaining insights
+
+    DATA PRESENTATION STRATEGY:
+    For each dataset, provide:
+    1. Context paragraph introducing the data
+    2. Markdown table with the raw data
+    3. Mermaid diagram visualizing the key insights
+    4. Analysis paragraph explaining what the data reveals
+
+    Example structure:
+    ````markdown
+    ### Sales Performance by Region
+
+    Our analysis reveals significant regional variations in sales performance across Q4 2024.
+
+    | Region | Sales ($M) | Growth (%) | Market Share (%) |
+    |--------|-----------|-----------|------------------|
+    | North  | 45.2      | 12.5      | 35              |
+    | South  | 32.1      | 8.3       | 25              |
+    | East   | 28.7      | 15.2      | 22              |
+    | West   | 23.4      | 6.1       | 18              |
+    ```mermaid
+    pie title "Market Share by Region"
+        "North" : 35
+        "South" : 25
+        "East" : 22
+        "West" : 18
+    ```
+
+    The North region dominates with 35% market share, driven by strong enterprise adoption. The East region shows the highest growth rate at 15.2%, indicating emerging opportunities.
+    ````
+
+    CONTENT ORGANIZATION:
+    Structure your document as follows:
+
+    1. TITLE (# level)
+    - Clear, descriptive title summarizing the document
+
+    2. EXECUTIVE SUMMARY (## level)
+    - 2-3 paragraphs synthesizing key findings
+    - Highlight most important insights
+    - Set context for the detailed analysis
+
+    3. KEY FINDINGS (## level)
+    - 5-10 bullet points with the most critical insights
+    - Use **bold** for emphasis on key numbers or conclusions
+    - Make each finding actionable or meaningful
+
+    4. DETAILED ANALYSIS (## level sections)
+    - Break into logical subsections (### level)
+    - For each subsection:
+        * Introduction paragraph
+        * Markdown table with data
+        * Mermaid diagram
+        * Analysis paragraph(s)
+    - Use #### for deeper subdivisions if needed
+
+    5. METHODOLOGY (## level, if applicable)
+    - Explain data sources
+    - Describe analysis approach
+    - Note any limitations or assumptions
+
+    6. CONCLUSIONS (## level)
+    - Synthesize insights from all sections
+    - Provide recommendations if appropriate
+    - Suggest next steps or areas for further investigation
+
+    7. SOURCES (## level)
+    - List all sources as clickable Markdown links
+    - Format: [Source Title](URL)
+    - Group by category if many sources
+
+    STYLE GUIDELINES:
+    - Professional yet accessible tone
+    - Active voice preferred over passive
+    - Clear and concise language (avoid jargon unless necessary)
+    - Use transitions between sections
+    - Logical information flow
+    - Proper grammar and punctuation
+    - Consistent formatting throughout
+    - Data-driven narrative (let the numbers tell the story)
+
+    CONVERSATIONAL BEHAVIOR:
+    - On first request: Create a complete new document from scratch
+    - On update requests: Modify relevant sections while maintaining overall structure
+    - On follow-up questions: Integrate new information seamlessly
+    - On clarifications: Refine specific sections as requested
+    - Always return the COMPLETE document, never fragments or diffs
+    - Maintain consistency with previous conversation turns
+    - Remember context from earlier in the conversation
+
+    TABLE FORMATTING RULES:
+    - Use proper alignment: left for text, right for numbers
+    - Include units in column headers (e.g., "Sales ($M)", "Growth (%)")
+    - Format numbers consistently (same decimal places)
+    - Use separators for large numbers (e.g., 1,000,000)
+    - Keep tables concise (max 10-15 rows; summarize if more data)
+    - Add totals or averages where appropriate
+
+    QUALITY CHECKLIST:
+    Before outputting, ensure:
+    ✓ Document starts with # title
+    ✓ All sections have appropriate header levels
+    ✓ Every data table is accompanied by a Mermaid diagram
+    ✓ All Mermaid diagrams are properly formatted and render-ready
+    ✓ Analysis text explains the "so what" of each visualization
+    ✓ Sources are properly cited with clickable links
+    ✓ No HTML tags or non-Markdown syntax (except Mermaid blocks)
+    ✓ Consistent formatting throughout
+    ✓ Professional, clear, and engaging writing
+    ✓ Document tells a coherent story from start to finish
+
+    OUTPUT REQUIREMENTS:
+    - Pure Markdown text only
+    - No code block wrappers around the entire document
+    - No HTML tags (except within Mermaid if needed)
+    - Start directly with # title
+    - Return the COMPLETE document every time
+    - Ensure all Mermaid blocks use proper ```mermaid syntax
+
+    You produce high-quality, visually-rich Markdown documents that effectively present data analysis through tables, Mermaid diagrams, and clear narrative."""
+        
+        return base_rules
+ 
     def _get_system_prompt_svg_only(self, is_update: bool) -> str:
         """Get system prompt for SVG-only generation"""
         
@@ -2058,48 +1682,238 @@ Your job is to use 100% of it to create an exhaustive, beautiful application."""
         else:
             return base_rules + "\n\n**MODE:** You will CREATE a new application from scratch."
         
-    def generate_report(
-        self,
-        user_query: str,
-        search_results: Dict[str, List[Dict]],
-        scraped_results: List[Dict],
-        structured_data: Dict
-    ) -> tuple[str, str]:
+    def _generate_markdown(
+    self,
+    user_query: str,
+    search_results: Dict[str, List[Dict]],
+    scraped_results: List[Dict],
+    structured_data: Dict
+) -> str:
         """
-        Generate both markdown and HTML reports.
-        First generates markdown with all data, then converts to HTML.
-        
-        Returns:
-            tuple: (markdown_content, html_content)
+        Generate Markdown with comprehensive context including scraped data.
+        Supports conversational updates.
         """
         
-        # Step 1: Generate comprehensive markdown report
-        if self.verbose:
-            self._log("REPORT", "Generating markdown report...")
+        # Build search context string
+        search_context = ""
+        if search_results:
+            search_context = "\n\n=== WEB SEARCH RESULTS ===\n"
+            for query, results in search_results.items():
+                search_context += f"\nQuery: {query}\n"
+                for i, result in enumerate(results, 1):
+                    search_context += f"\n{i}. {result['title']}\n"
+                    search_context += f"   URL: {result['link']}\n"
+                    search_context += f"   Snippet: {result['snippet']}\n"
         
-        markdown_content = self._generate_html(
-            user_query=user_query,
-            search_results=search_results,
-            scraped_results=scraped_results,
-            structured_data=structured_data
-        )
+        # Build scraped content context
+        scraped_context = ""
+        if scraped_results:
+            scraped_context = "\n\n=== SCRAPED WEB CONTENT (FULL DEPTH) ===\n"
+            scraped_context += "This is the complete content extracted from web pages.\n"
+            
+            successful_scrapes = [s for s in scraped_results if not s.get('error')]
+            
+            for i, scrape in enumerate(successful_scrapes, 1):
+                scraped_context += f"\n--- Source {i}: {scrape['url']} ---\n"
+                scraped_context += f"Relevance Score: {scrape['score']:.2f}\n"
+                scraped_context += f"Word Count: {scrape['word_count']}\n"
+                
+                if scrape.get('best_chunk'):
+                    scraped_context += f"\nMost Relevant Content:\n"
+                    scraped_context += "```\n"
+                    scraped_context += scrape['best_chunk'][:3000]
+                    if len(scrape['best_chunk']) > 3000:
+                        scraped_context += "\n... (truncated)"
+                    scraped_context += "\n```\n"
+                
+                if scrape.get('tables') and scrape['tables_count'] > 0:
+                    scraped_context += f"\nExtracted Tables ({scrape['tables_count']} total):\n"
+                    for j, table in enumerate(scrape['tables'], 1):
+                        scraped_context += f"\nTable {j}:\n"
+                        scraped_context += "```json\n"
+                        scraped_context += json.dumps(table, indent=2)[:2000]
+                        if len(json.dumps(table)) > 2000:
+                            scraped_context += "\n... (truncated)"
+                        scraped_context += "\n```\n"
         
-        if self.verbose:
-            self._log("MARKDOWN", f"Generated {len(markdown_content)} characters")
+        # Build structured data context
+        structured_context = ""
+        if structured_data:
+            structured_context = "\n\n=== EXTRACTED STRUCTURED DATA ===\n"
+            structured_context += json.dumps(structured_data, indent=2)
+            structured_context += "\n\nThis is pre-extracted, structured data. Use these exact values in your document."
         
-        # Step 2: Convert markdown to stunning HTML
-        if self.verbose:
-            self._log("REPORT", "Converting markdown to HTML...")
+        # Get system prompt
+        system_prompt = self._get_system_prompt_strategic_markdown()
         
-        html_content =  self._generate_html_from_markdown(
-            markdown_content=markdown_content
-        )
+        # Count data for context
+        num_scraped = len([s for s in scraped_results if not s.get('error')]) if scraped_results else 0
+        num_tables = sum(s.get('tables_count', 0) for s in scraped_results) if scraped_results else 0
         
-        if self.verbose:
-            self._log("HTML", f"Generated {len(html_content)} characters")
-        
-        return  html_content
+        # Build conversational user prompt
+        user_prompt = f"""USER REQUEST: {user_query}
+
+    DATA PROVIDED:
+    {search_context}
+    {scraped_context}
+    {structured_context}
+
+    YOUR TASK: Create or update a comprehensive Markdown document based on the user's request and the data provided above.
+
+    CONVERSATION CONTEXT:
+    - If this is the first request, create a complete new Markdown document
+    - If the user is asking to modify/update previous content, apply their requested changes
+    - If the user is asking follow-up questions, provide information while maintaining document structure
+    - Maintain continuity with previous conversation turns
+
+    KEY REQUIREMENTS:
+
+    1. FORMATTING:
+    - Use proper Markdown syntax throughout
+    - Create Markdown tables for all tabular data:
+    ```markdown
+        | Column 1 | Column 2 | Column 3 |
+        |----------|----------|----------|
+        | Data 1   | Data 2   | Data 3   |
+    ```
+    - Use headers for structure (# ## ### ####)
+    - Use **bold** and *italic* for emphasis
+    - Use `code blocks` for technical content
+    - Use > blockquotes for important callouts
+
+    2. DATA USAGE:
+    - Process all {num_tables} tables from the {num_scraped} scraped pages (if provided)
+    - For each table: create a properly formatted Markdown table
+    - Include explanatory text from the scraped content
+    - Synthesize insights in an executive summary
+
+    3. DOCUMENT STRUCTURE:
+    ```markdown
+    # Title
     
+    ## Executive Summary
+    2-3 paragraphs synthesizing the key data and insights
+    
+    ## Key Findings
+    - Finding 1
+    - Finding 2
+    - Finding 3
+    
+    ---
+    
+    ## Data Analysis
+    
+    ### Dataset 1
+    Brief introduction to this dataset
+    
+    | Column | Column | Column |
+    |--------|--------|--------|
+    | data   | data   | data   |
+    
+    Analysis paragraph explaining what the data shows.
+    
+    ### Dataset 2
+    ...
+    
+    ---
+    
+    ## Sources
+    - [Source 1 Title](url)
+    - [Source 2 Title](url)
+    ```
+
+    4. STYLE:
+    - Professional and clear
+    - Well-organized with clear hierarchy
+    - Easy to read and scan
+    - Proper spacing between sections
+
+    5. CONVERSATIONAL HANDLING:
+    - For creation requests: Generate complete document
+    - For update requests: Modify the relevant sections while keeping the rest intact
+    - For clarification questions: Provide answers and update document if needed
+    - For follow-up data: Integrate seamlessly into existing structure
+
+    6. OUTPUT FORMAT:
+    - Pure Markdown text
+    - No HTML tags
+    - No code block wrappers (don't wrap output in ```markdown)
+    - Start directly with the # title
+    - Return the COMPLETE document (not just the changed parts)
+
+    Generate the complete Markdown document now. Start with: #"""
+        
+        # Add to conversation history
+        self.conversation_history.append({
+            "role": "user",
+            "content": user_prompt
+        })
+        
+        # Generate with Claude
+        start_time = datetime.now()
+        
+        import anthropic
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        
+        # Filter out system messages and use system parameter instead
+        filtered_messages = []
+        for msg in self.conversation_history:
+            if msg.get("role") != "system":
+                filtered_messages.append(msg)
+            
+        message = client.messages.create(
+            model="claude-opus-4-20250514",
+            system=system_prompt,
+            max_tokens=16000,
+            messages=filtered_messages,
+        )
+        
+        duration = (datetime.now() - start_time).total_seconds()
+        
+        markdown_content = message.content[0].text
+        
+        # Clean up - remove code block wrappers if present
+        if markdown_content.startswith("```markdown"):
+            markdown_content = markdown_content[11:]
+        elif markdown_content.startswith("```md"):
+            markdown_content = markdown_content[5:]
+        elif markdown_content.startswith("```"):
+            markdown_content = markdown_content[3:]
+        if markdown_content.endswith("```"):
+            markdown_content = markdown_content[:-3]
+        markdown_content = markdown_content.strip()
+        
+        # Validate it starts with a header
+        if not markdown_content.startswith("#"):
+            self._log("WARNING", "Generated content doesn't start with a Markdown header")
+            markdown_content = f"# Generated Report\n\n{markdown_content}"
+        
+        # Store state
+        self.current_markdown = markdown_content
+        
+        # Add assistant response to conversation history
+        summary = f"Generated Markdown document with {len(markdown_content.split())} words."
+        if search_results:
+            total_results = sum(len(r) for r in search_results.values())
+            summary += f" Used {len(search_results)} search queries with {total_results} results."
+        if scraped_results:
+            successful = len([s for s in scraped_results if not s.get('error')])
+            total_tables = sum(s.get('tables_count', 0) for s in scraped_results)
+            summary += f" Processed {successful} pages with {total_tables} tables."
+        if structured_data:
+            summary += f" Utilized structured data."
+        
+        self.conversation_history.append({
+            "role": "assistant",
+            "content": markdown_content  # Store full markdown in conversation
+        })
+        
+        if self.verbose:
+            self._log("API", f"Response in {duration:.2f}s")
+            self._log("OUTPUT", f"Generated {len(markdown_content)} characters of Markdown")
+        
+        return markdown_content
+
     def _get_system_prompt(self, is_update: bool) -> str:
         """Get system prompt for generation"""
         
